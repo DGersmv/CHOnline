@@ -12,8 +12,8 @@ android {
         applicationId = "com.example.chonline"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 4
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -56,4 +56,9 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+    implementation("com.squareup.okhttp3:okhttp:4.9.3")
+    implementation("io.coil-kt:coil-compose:2.2.2") // Для загрузки изображений
+    implementation("androidx.activity:activity-compose:1.7.2") // Для Activity Result API
+    implementation ("androidx.work:work-runtime-ktx:2.9.0")
+
 }
