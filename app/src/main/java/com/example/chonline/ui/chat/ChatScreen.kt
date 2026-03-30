@@ -3,13 +3,14 @@ package com.example.chonline.ui.chat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,10 +18,16 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -289,6 +296,9 @@ private fun MessageBubble(
 ) {
     val bubbleColor = if (isMine) CorpChatColors.bgBubbleOut else CorpChatColors.bgBubbleIn
     val shape = RoundedCornerShape(12.dp)
+    val showMsgMenu = isMine && msg.msgType == "text"
+    var menuExpanded by remember(msg.id) { mutableStateOf(false) }
+    val contentEndPadding = if (showMsgMenu) 40.dp else 12.dp
     Column(
         Modifier
             .fillMaxWidth()
@@ -300,71 +310,99 @@ private fun MessageBubble(
             style = MaterialTheme.typography.labelSmall,
             color = CorpChatColors.textMuted,
         )
-        Column(
+        Box(
             Modifier
                 .widthIn(max = 320.dp)
                 .clip(shape)
-                .background(bubbleColor)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalAlignment = if (isMine) Alignment.End else Alignment.Start,
+                .background(bubbleColor),
         ) {
-            when {
-                msg.msgType == "file" && msg.file?.mime?.startsWith("image/") == true -> {
-                    val path = imagePathFor(msg.file, isClient)
-                    val full = baseUrl + path
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(full)
-                            .crossfade(true)
-                            .build(),
-                        contentDescription = null,
-                        imageLoader = imageLoader,
-                        modifier = Modifier.fillMaxWidth(),
-                        contentScale = ContentScale.Fit,
-                    )
-                    if (msg.text.isNotBlank()) {
-                        Text(msg.text, style = MaterialTheme.typography.bodyMedium, color = CorpChatColors.textPrimary)
-                    }
-                }
-
-                msg.msgType == "file" -> {
-                    Text(
-                        "Вложение: ${msg.file?.name ?: "файл"}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = CorpChatColors.textPrimary,
-                    )
-                    if (msg.text.isNotBlank()) {
-                        Text(msg.text, style = MaterialTheme.typography.bodySmall, color = CorpChatColors.textSecondary)
-                    }
-                }
-
-                else -> Text(msg.text, style = MaterialTheme.typography.bodyLarge, color = CorpChatColors.textPrimary)
-            }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = contentEndPadding, top = 8.dp, bottom = 8.dp),
+                horizontalAlignment = if (isMine) Alignment.End else Alignment.Start,
             ) {
-                if (msg.editedAt != null) {
+                when {
+                    msg.msgType == "file" && msg.file?.mime?.startsWith("image/") == true -> {
+                        val path = imagePathFor(msg.file, isClient)
+                        val full = baseUrl + path
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(full)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = null,
+                            imageLoader = imageLoader,
+                            modifier = Modifier.fillMaxWidth(),
+                            contentScale = ContentScale.Fit,
+                        )
+                        if (msg.text.isNotBlank()) {
+                            Text(msg.text, style = MaterialTheme.typography.bodyMedium, color = CorpChatColors.textPrimary)
+                        }
+                    }
+
+                    msg.msgType == "file" -> {
+                        Text(
+                            "Вложение: ${msg.file?.name ?: "файл"}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = CorpChatColors.textPrimary,
+                        )
+                        if (msg.text.isNotBlank()) {
+                            Text(msg.text, style = MaterialTheme.typography.bodySmall, color = CorpChatColors.textSecondary)
+                        }
+                    }
+
+                    else -> Text(msg.text, style = MaterialTheme.typography.bodyLarge, color = CorpChatColors.textPrimary)
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (msg.editedAt != null) {
+                        Text(
+                            "изменено",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CorpChatColors.textMuted,
+                        )
+                    }
                     Text(
-                        "изменено",
+                        msg.time,
                         style = MaterialTheme.typography.labelSmall,
                         color = CorpChatColors.textMuted,
                     )
                 }
-                Text(
-                    msg.time,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = CorpChatColors.textMuted,
-                )
             }
-            if (isMine && msg.msgType == "text") {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TextButton(onClick = onEdit, contentPadding = PaddingValues(0.dp)) {
-                        Text("Изменить", style = MaterialTheme.typography.labelSmall)
-                    }
-                    TextButton(onClick = onDelete, contentPadding = PaddingValues(0.dp)) {
-                        Text("Удалить", style = MaterialTheme.typography.labelSmall, color = CorpChatColors.error)
-                    }
+            if (showMsgMenu) {
+                IconButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(36.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = "Действия с сообщением",
+                        tint = CorpChatColors.textMuted,
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Изменить") },
+                        onClick = {
+                            menuExpanded = false
+                            onEdit()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Удалить") },
+                        onClick = {
+                            menuExpanded = false
+                            onDelete()
+                        },
+                    )
                 }
             }
         }
