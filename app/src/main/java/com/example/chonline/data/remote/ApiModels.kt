@@ -71,6 +71,11 @@ data class EmployeeDto(
     @SerialName("avatarRev") val avatarRev: String? = null,
     /** Заказчик в объединённом списке контактов (employee-only). */
     @SerialName("isClient") val isClient: Boolean = false,
+    /**
+     * Сотрудник: из GET /employees — есть ли общая с заказчиком комната для диалога (см. POST /rooms/open-client).
+     * null — старый сервер; false — заказчик виден для групп, но диалог из контактов недоступен.
+     */
+    @SerialName("canOpenDm") val canOpenDm: Boolean? = null,
 )
 
 /** Сотрудник в списке для заказчика (`GET /client/employees`). */
@@ -190,7 +195,17 @@ data class SendMessageResponse(
 data class CreateDmRequest(@SerialName("peerId") val peerId: String)
 
 @Serializable
+data class OpenClientRequest(val clientId: String)
+
+@Serializable
 data class CreateDmResponse(val room: RoomDto? = null, val error: String? = null)
+
+@Serializable
+data class CreateGroupRequest(
+    val title: String,
+    val memberIds: List<String>,
+    val clientIds: List<String>,
+)
 
 @Serializable
 data class GroupEditResponse(

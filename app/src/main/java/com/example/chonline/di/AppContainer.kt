@@ -30,7 +30,7 @@ class AppContainer(context: Context) {
     )
 
     val authRepository = AuthRepository(api, tokenStore)
-    val chatRepository = ChatRepository(api, socketController, lastSeenStore, tokenStore)
+    val chatRepository = ChatRepository(api, socketController, lastSeenStore, tokenStore, okHttp, json)
 
     val okHttpForImages = okHttp
 }

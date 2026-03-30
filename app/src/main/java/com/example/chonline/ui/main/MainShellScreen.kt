@@ -23,10 +23,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -77,6 +79,7 @@ fun MainShellScreen(
     container: AppContainer,
     onOpenChat: (String) -> Unit,
     onLogout: () -> Unit,
+    onCreateGroup: () -> Unit = {},
 ) {
     val rooms by roomsViewModel.rooms.collectAsStateWithLifecycle()
     val employees by roomsViewModel.employees.collectAsStateWithLifecycle()
@@ -84,6 +87,8 @@ fun MainShellScreen(
     val error by roomsViewModel.error.collectAsStateWithLifecycle()
     val online by roomsViewModel.online.collectAsStateWithLifecycle()
     val socketConnected by roomsViewModel.socketConnected.collectAsStateWithLifecycle()
+
+    val onlineIds = remember(online) { online.map { it.id }.toSet() }
 
     var tab by remember { mutableStateOf(MainTab.Chats) }
     var searchQuery by remember { mutableStateOf("") }
@@ -121,16 +126,37 @@ fun MainShellScreen(
                     .fillMaxWidth(),
             ) {
                 when (tab) {
-                    MainTab.Chats -> ChatsTabBody(
-                        rooms = filteredRooms,
-                        employees = employees,
-                        container = container,
-                        loading = loading,
-                        error = error,
-                        onOpenChat = onOpenChat,
-                    )
+                    MainTab.Chats -> {
+                        val isClient = container.tokenStore.isClient()
+                        Box(Modifier.fillMaxSize()) {
+                            ChatsTabBody(
+                                rooms = filteredRooms,
+                                employees = employees,
+                                onlineIds = onlineIds,
+                                container = container,
+                                loading = loading,
+                                error = error,
+                                onOpenChat = onOpenChat,
+                            )
+                            if (!isClient) {
+                                FloatingActionButton(
+                                    onClick = onCreateGroup,
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .padding(16.dp),
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                ) {
+                                    Icon(Icons.Filled.Add, contentDescription = "Новая группа")
+                                }
+                            }
+                        }
+                    }
 
                     MainTab.Contacts -> EmployeesListContent(
+                        employees = employees,
+                        onlineIds = onlineIds,
+                        loading = loading,
+                        networkError = error,
                         container = container,
                         onOpenDm = onOpenChat,
                         modifier = Modifier.fillMaxSize(),
@@ -211,6 +237,7 @@ private fun TopSearchStatusBar(
 private fun ChatsTabBody(
     rooms: List<RoomDto>,
     employees: List<EmployeeDto>,
+    onlineIds: Set<String>,
     container: AppContainer,
     loading: Boolean,
     error: String?,
@@ -230,6 +257,9 @@ private fun ChatsTabBody(
             loading && rooms.isEmpty() -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             else -> LazyColumn(Modifier.fillMaxSize()) {
                 items(rooms, key = { it.id }) { room ->
+                    val peerOnline = remember(room, onlineIds, myId) {
+                        dmPeerOnline(room, onlineIds, myId)
+                    }
                     ListItem(
                         leadingContent = {
                             ChatRowAvatar(
@@ -239,6 +269,7 @@ private fun ChatsTabBody(
                                 isClientApp = isClientApp,
                                 myUserId = myId,
                                 imageLoader = imageLoader,
+                                showOnlineDot = peerOnline,
                             )
                         },
                         headlineContent = { Text(room.title.ifBlank { room.id }) },
@@ -276,6 +307,7 @@ private fun ChatRowAvatar(
     isClientApp: Boolean,
     myUserId: String?,
     imageLoader: ImageLoader,
+    showOnlineDot: Boolean = false,
 ) {
     val title = room.title.ifBlank { room.id }
     val initials = remember(title) { chatRowInitials(title) }
@@ -283,34 +315,54 @@ private fun ChatRowAvatar(
         chatListAvatarUrl(room, employees, baseUrl, isClientApp, myUserId)
     }
     val size = 44.dp
-    if (url != null) {
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(url)
-                .crossfade(true)
-                .build(),
-            contentDescription = null,
-            imageLoader = imageLoader,
-            modifier = Modifier
-                .size(size)
-                .clip(CircleShape),
-            contentScale = ContentScale.Crop,
-        )
-    } else {
-        Box(
-            modifier = Modifier
-                .size(size)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                initials,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+    val onlineColor = Color(0xFF2E7D32)
+    Box(modifier = Modifier.size(size)) {
+        if (url != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(url)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = null,
+                imageLoader = imageLoader,
+                modifier = Modifier
+                    .size(size)
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(size)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    initials,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (showOnlineDot) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(onlineColor)
+                    .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape),
             )
         }
     }
+}
+
+private fun dmPeerOnline(room: RoomDto, onlineIds: Set<String>, myUserId: String?): Boolean {
+    if (room.type != "dm") return false
+    val peer = room.dmPeerUserId ?: return false
+    if (myUserId != null && peer == myUserId) return false
+    return onlineIds.contains(peer)
 }
 
 private fun chatRowInitials(title: String): String {

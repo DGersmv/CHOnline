@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -28,12 +30,15 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -93,6 +98,9 @@ class GroupEditViewModel(
     private val _pickedUri = MutableStateFlow<Uri?>(null)
     val pickedUri: StateFlow<Uri?> = _pickedUri.asStateFlow()
 
+    private val _createdBy = MutableStateFlow<String?>(null)
+    val createdBy: StateFlow<String?> = _createdBy.asStateFlow()
+
     init {
         load()
     }
@@ -133,6 +141,7 @@ class GroupEditViewModel(
             chat.getGroupEdit(roomId)
                 .onSuccess { ge ->
                     _title.value = ge.room.title
+                    _createdBy.value = ge.room.createdBy
                     _selectedStaff.value = ge.memberIds.toSet()
                     _selectedClients.value = ge.clientIds.toSet()
                     _hasServerPhoto.value = (ge.room.hasGroupAvatar ?: 0) != 0
@@ -193,6 +202,38 @@ class GroupEditViewModel(
         }
     }
 
+    fun leaveGroup(onDone: () -> Unit) {
+        viewModelScope.launch {
+            _saving.value = true
+            _error.value = null
+            chat.leaveGroup(roomId)
+                .onSuccess {
+                    _saving.value = false
+                    onDone()
+                }
+                .onFailure {
+                    _error.value = it.message
+                    _saving.value = false
+                }
+        }
+    }
+
+    fun deleteGroup(onDone: () -> Unit) {
+        viewModelScope.launch {
+            _saving.value = true
+            _error.value = null
+            chat.deleteRoomChat(roomId)
+                .onSuccess {
+                    _saving.value = false
+                    onDone()
+                }
+                .onFailure {
+                    _error.value = it.message
+                    _saving.value = false
+                }
+        }
+    }
+
     companion object {
         fun factory(roomId: String, chat: ChatRepository) =
             object : ViewModelProvider.Factory {
@@ -220,6 +261,8 @@ fun GroupEditScreen(
     roomId: String,
     container: AppContainer,
     onBack: () -> Unit,
+    /** После выхода или удаления группы — вернуться к списку чатов */
+    onRoomRemoved: () -> Unit = onBack,
 ) {
     val vm: GroupEditViewModel = viewModel(
         key = roomId,
@@ -228,6 +271,7 @@ fun GroupEditScreen(
     val loading by vm.loading.collectAsStateWithLifecycle()
     val saving by vm.saving.collectAsStateWithLifecycle()
     val err by vm.error.collectAsStateWithLifecycle()
+    val createdBy by vm.createdBy.collectAsStateWithLifecycle()
     val title by vm.title.collectAsStateWithLifecycle()
     val employees by vm.employees.collectAsStateWithLifecycle()
     val selStaff by vm.selectedStaff.collectAsStateWithLifecycle()
@@ -248,6 +292,12 @@ fun GroupEditScreen(
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         vm.setPickedUri(uri)
     }
+
+    val myId = container.tokenStore.session.value?.userId
+    val isCreator = !loading && createdBy != null && myId != null && createdBy == myId
+    val isMemberOnly = !loading && createdBy != null && myId != null && createdBy != myId
+    var confirmLeave by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
 
     val staff = remember(employees) { employees.filter { !it.isClient } }
     val clients = remember(employees) { employees.filter { it.isClient } }
@@ -273,14 +323,16 @@ fun GroupEditScreen(
                     TextButton(onClick = onBack, enabled = !saving) { Text("Назад") }
                 },
                 actions = {
-                    TextButton(
-                        onClick = { vm.save(context) { onBack() } },
-                        enabled = !saving && !loading,
-                    ) {
-                        if (saving) {
-                            CircularProgressIndicator(Modifier.size(22.dp))
-                        } else {
-                            Text("Сохранить")
+                    if (isCreator) {
+                        TextButton(
+                            onClick = { vm.save(context) { onBack() } },
+                            enabled = !saving && !loading,
+                        ) {
+                            if (saving) {
+                                CircularProgressIndicator(Modifier.size(22.dp))
+                            } else {
+                                Text("Сохранить")
+                            }
                         }
                     }
                 },
@@ -297,58 +349,61 @@ fun GroupEditScreen(
                 .padding(padding)
                 .padding(16.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                when {
-                    pickedUri != null -> {
-                        AsyncImage(
-                            model = ImageRequest.Builder(context).data(pickedUri).crossfade(true).build(),
-                            contentDescription = null,
-                            imageLoader = imageLoader,
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape),
-                            contentScale = ContentScale.Crop,
-                        )
+            if (isCreator) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    when {
+                        pickedUri != null -> {
+                            AsyncImage(
+                                model = ImageRequest.Builder(context).data(pickedUri).crossfade(true).build(),
+                                contentDescription = null,
+                                imageLoader = imageLoader,
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape),
+                                contentScale = ContentScale.Crop,
+                            )
+                        }
+                        serverPhotoUrl != null -> {
+                            AsyncImage(
+                                model = ImageRequest.Builder(context).data(serverPhotoUrl).crossfade(true).build(),
+                                contentDescription = null,
+                                imageLoader = imageLoader,
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape),
+                                contentScale = ContentScale.Crop,
+                            )
+                        }
+                        else -> {
+                            Text(
+                                title.take(2).uppercase().ifBlank { "?" },
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.size(56.dp),
+                            )
+                        }
                     }
-                    serverPhotoUrl != null -> {
-                        AsyncImage(
-                            model = ImageRequest.Builder(context).data(serverPhotoUrl).crossfade(true).build(),
-                            contentDescription = null,
-                            imageLoader = imageLoader,
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape),
-                            contentScale = ContentScale.Crop,
-                        )
-                    }
-                    else -> {
-                        Text(
-                            title.take(2).uppercase().ifBlank { "?" },
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.size(56.dp),
-                        )
-                    }
-                }
-                Column {
-                    Button(onClick = { pick.launch("image/*") }, enabled = !saving) { Text("Фото") }
-                    if (hasServerPhoto || pickedUri != null) {
-                        TextButton(onClick = { vm.markRemovePhoto() }, enabled = !saving) {
-                            Text("Убрать фото")
+                    Column {
+                        Button(onClick = { pick.launch("image/*") }, enabled = !saving) { Text("Фото") }
+                        if (hasServerPhoto || pickedUri != null) {
+                            TextButton(onClick = { vm.markRemovePhoto() }, enabled = !saving) {
+                                Text("Убрать фото")
+                            }
                         }
                     }
                 }
+                Spacer(Modifier.height(12.dp))
             }
-            Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = title,
                 onValueChange = vm::setTitle,
                 label = { Text("Название") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                enabled = !saving,
+                enabled = !saving && isCreator,
+                readOnly = !isCreator,
             )
             Spacer(Modifier.height(8.dp))
             Text("Участники", style = MaterialTheme.typography.labelLarge)
@@ -368,7 +423,7 @@ fun GroupEditScreen(
                             Checkbox(
                                 checked = selStaff.contains(em.id),
                                 onCheckedChange = { vm.toggleStaff(em.id) },
-                                enabled = !saving,
+                                enabled = !saving && isCreator,
                             )
                             Text(displayName(em))
                         }
@@ -381,7 +436,7 @@ fun GroupEditScreen(
                             Checkbox(
                                 checked = selClients.contains(em.id),
                                 onCheckedChange = { vm.toggleClient(em.id) },
-                                enabled = !saving,
+                                enabled = !saving && isCreator,
                             )
                             Text(displayName(em) + " (заказчик)")
                         }
@@ -391,6 +446,69 @@ fun GroupEditScreen(
             err?.let {
                 Text(it, color = MaterialTheme.colorScheme.error)
             }
+            if (isMemberOnly) {
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = { confirmLeave = true },
+                    enabled = !saving,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Выйти из группы")
+                }
+            }
+            if (isCreator) {
+                Spacer(Modifier.height(12.dp))
+                TextButton(
+                    onClick = { confirmDelete = true },
+                    enabled = !saving,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Удалить группу")
+                }
+            }
         }
+    }
+
+    if (confirmLeave) {
+        AlertDialog(
+            onDismissRequest = { confirmLeave = false },
+            title = { Text("Выйти из группы?") },
+            text = { Text("Чат пропадёт из вашего списка.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmLeave = false
+                        vm.leaveGroup(onRoomRemoved)
+                    },
+                ) { Text("Выйти") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmLeave = false }) { Text("Отмена") }
+            },
+        )
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Удалить группу?") },
+            text = { Text("Группа исчезнет у всех участников, сообщения и файлы будут удалены.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        vm.deleteGroup(onRoomRemoved)
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFB00020)),
+                ) { Text("Удалить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("Отмена") }
+            },
+        )
     }
 }

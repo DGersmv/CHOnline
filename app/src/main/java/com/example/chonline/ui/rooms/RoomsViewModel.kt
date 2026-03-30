@@ -98,6 +98,8 @@ class RoomsViewModel(
         }
     }
 
+    fun refresh() = load()
+
     fun clearError() {
         _error.value = null
     }

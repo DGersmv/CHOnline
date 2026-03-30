@@ -64,8 +64,21 @@ interface CorpChatApi {
     @DELETE("rooms/{roomId}/avatar")
     suspend fun deleteRoomAvatar(@Path("roomId", encoded = true) roomId: String): RoomMutationResponse
 
+    @POST("rooms/{roomId}/leave")
+    suspend fun leaveRoom(@Path("roomId", encoded = true) roomId: String): OkResponse
+
+    @DELETE("rooms/{roomId}")
+    suspend fun deleteRoom(@Path("roomId", encoded = true) roomId: String): OkResponse
+
     @POST("rooms/dm")
     suspend fun createDm(@Body body: CreateDmRequest): CreateDmResponse
+
+    /** Сотрудник открывает чат с заказчиком (общая портальная комната). */
+    @POST("rooms/open-client")
+    suspend fun openClient(@Body body: OpenClientRequest): CreateDmResponse
+
+    @POST("rooms/group")
+    suspend fun createGroup(@Body body: CreateGroupRequest): CreateDmResponse
 
     @GET("rooms/{roomId}/messages")
     suspend fun messages(

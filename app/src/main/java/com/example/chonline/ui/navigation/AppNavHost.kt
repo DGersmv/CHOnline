@@ -24,6 +24,7 @@ import com.example.chonline.ui.auth.LoginScreen
 import com.example.chonline.ui.auth.VerifyScreen
 import com.example.chonline.ui.chat.ChatScreen
 import com.example.chonline.ui.main.MainShellScreen
+import com.example.chonline.ui.rooms.GroupCreateScreen
 import com.example.chonline.ui.rooms.GroupEditScreen
 import com.example.chonline.ui.profile.ProfileScreen
 import com.example.chonline.ui.profile.ProfileViewModel
@@ -139,6 +140,9 @@ fun AppNavHost(container: AppContainer) {
                     val e = URLEncoder.encode(roomId, StandardCharsets.UTF_8.name())
                     nav.navigate("chat/$e")
                 },
+                onCreateGroup = {
+                    nav.navigate("group-create") { launchSingleTop = true }
+                },
                 onLogout = {
                     scope.launch {
                         container.authRepository.logout()
@@ -165,6 +169,24 @@ fun AppNavHost(container: AppContainer) {
                     val e = URLEncoder.encode(roomId, StandardCharsets.UTF_8.name())
                     nav.navigate("group-edit/$e")
                 },
+                onOpenGroupAsMember = {
+                    val e = URLEncoder.encode(roomId, StandardCharsets.UTF_8.name())
+                    nav.navigate("group-edit/$e")
+                },
+            )
+        }
+        composable("group-create") {
+            val roomsVm: RoomsViewModel = viewModel(factory = factory)
+            GroupCreateScreen(
+                container = container,
+                onBack = { nav.popBackStack() },
+                onCreated = { roomId ->
+                    roomsVm.refresh()
+                    val e = URLEncoder.encode(roomId, StandardCharsets.UTF_8.name())
+                    nav.navigate("chat/$e") {
+                        popUpTo("group-create") { inclusive = true }
+                    }
+                },
             )
         }
         composable(
@@ -177,6 +199,9 @@ fun AppNavHost(container: AppContainer) {
                 roomId = roomId,
                 container = container,
                 onBack = { nav.popBackStack() },
+                onRoomRemoved = {
+                    nav.popBackStack("rooms", inclusive = false)
+                },
             )
         }
     }

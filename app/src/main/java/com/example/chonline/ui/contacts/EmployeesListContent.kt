@@ -1,5 +1,6 @@
 package com.example.chonline.ui.contacts
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -16,19 +17,19 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.remember
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import coil.ImageLoader
 import coil.compose.AsyncImage
@@ -41,32 +42,38 @@ import java.nio.charset.StandardCharsets
 
 @Composable
 fun EmployeesListContent(
+    /** Кэш из [com.example.chonline.ui.rooms.RoomsViewModel] — не грузим список при каждом переключении вкладки. */
+    employees: List<EmployeeDto>,
+    /** Пользователи в сети (сокет `online`), по `userId`. */
+    onlineIds: Set<String> = emptySet(),
+    /** Первичная загрузка приложения: чаты + контакты ещё не пришли. */
+    loading: Boolean,
+    /** Ошибка сети при load() в ViewModel (опционально). */
+    networkError: String?,
     container: AppContainer,
     onOpenDm: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
-    var list by remember { mutableStateOf<List<EmployeeDto>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var openDmError by remember { mutableStateOf<String?>(null) }
     val myId = container.tokenStore.session.value?.userId
     val imageLoader = rememberCoilWithAuth(container)
     val base = com.example.chonline.BuildConfig.API_BASE_URL.trimEnd('/')
 
-    LaunchedEffect(Unit) {
-        loading = true
-        container.chatRepository.loadEmployees()
-            .onSuccess { list = it }
-            .onFailure { error = it.message }
-        loading = false
+    val list = employees.filter { em ->
+        if (em.id == myId) return@filter false
+        // Сотрудник: в контактах не показываем заказчика, с которым нельзя открыть диалог (сервер: canOpenDm).
+        if (em.isClient && em.canOpenDm == false) return@filter false
+        true
     }
+    val showInitialSpinner = loading && employees.isEmpty()
 
     Box(modifier.fillMaxSize()) {
         when {
-            loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+            showInitialSpinner -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             else -> LazyColumn(Modifier.fillMaxSize()) {
                 items(
-                    list.filter { it.id != myId },
+                    list,
                     key = { it.id },
                 ) { em ->
                     val title = displayName(em)
@@ -75,10 +82,11 @@ fun EmployeesListContent(
                     val job = em.jobTitle.trim()
                     ListItem(
                         leadingContent = {
-                            Avatar(
+                            AvatarWithOnline(
                                 baseUrl = base,
                                 employee = em,
                                 imageLoader = imageLoader,
+                                showOnlineDot = onlineIds.contains(em.id),
                             )
                         },
                         headlineContent = {
@@ -116,16 +124,17 @@ fun EmployeesListContent(
                         },
                         modifier = Modifier.clickable {
                             scope.launch {
-                                container.chatRepository.openDm(em.id)
+                                openDmError = null
+                                container.chatRepository.openDm(em.id, isClientContact = em.isClient)
                                     .onSuccess { onOpenDm(it.id) }
-                                    .onFailure { error = it.message }
+                                    .onFailure { openDmError = it.message }
                             }
                         },
                     )
                 }
             }
         }
-        error?.let {
+        (networkError ?: openDmError)?.let {
             Text(
                 it,
                 color = MaterialTheme.colorScheme.error,
@@ -163,6 +172,34 @@ private fun displayPhone(em: EmployeeDto): String {
     val ap = em.adminPhone.trim()
     if (ap.isNotBlank()) return ap
     return ""
+}
+
+@Composable
+private fun AvatarWithOnline(
+    baseUrl: String,
+    employee: EmployeeDto,
+    imageLoader: ImageLoader,
+    showOnlineDot: Boolean,
+) {
+    val size = 40.dp
+    val onlineColor = Color(0xFF2E7D32)
+    Box(modifier = Modifier.size(size)) {
+        Avatar(
+            baseUrl = baseUrl,
+            employee = employee,
+            imageLoader = imageLoader,
+        )
+        if (showOnlineDot) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(onlineColor)
+                    .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape),
+            )
+        }
+    }
 }
 
 @Composable

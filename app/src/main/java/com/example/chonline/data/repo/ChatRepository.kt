@@ -3,32 +3,46 @@ package com.example.chonline.data.repo
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.example.chonline.BuildConfig
 import com.example.chonline.data.local.LastSeenStore
 import com.example.chonline.data.local.TokenStore
 import com.example.chonline.data.remote.CorpChatApi
+import com.example.chonline.data.remote.CountingFileRequestBody
 import com.example.chonline.data.remote.CreateDmRequest
+import com.example.chonline.data.remote.CreateGroupRequest
+import com.example.chonline.data.remote.OpenClientRequest
 import com.example.chonline.data.remote.EmployeeDto
 import com.example.chonline.data.remote.GroupEditResponse
 import com.example.chonline.data.remote.MessageDto
 import com.example.chonline.data.remote.PatchRoomRequest
 import com.example.chonline.data.remote.RoomDto
+import com.example.chonline.data.remote.SendMessageResponse
 import com.example.chonline.data.remote.SendTextRequest
 import com.example.chonline.data.socket.ChatSocketController
 import com.example.chonline.data.socket.SocketEvent
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.HttpException
 import java.io.File
 import java.io.FileOutputStream
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 class ChatRepository(
     private val api: CorpChatApi,
     private val socket: ChatSocketController,
     private val lastSeenStore: LastSeenStore,
     private val tokenStore: TokenStore,
+    private val okHttp: OkHttpClient,
+    private val json: Json,
 ) {
 
     val socketEvents: Flow<SocketEvent> = socket.events
@@ -65,11 +79,14 @@ class ChatRepository(
         }
     }.mapError()
 
-    suspend fun openDm(peerId: String): Result<RoomDto> = runCatching {
-        val r = if (isClient()) {
-            api.clientOpenPeer(CreateDmRequest(peerId))
-        } else {
-            api.createDm(CreateDmRequest(peerId))
+    /**
+     * @param isClientContact только для сотрудника: [peerId] — id заказчика из `client_users`, не `users`.
+     */
+    suspend fun openDm(peerId: String, isClientContact: Boolean = false): Result<RoomDto> = runCatching {
+        val r = when {
+            isClient() -> api.clientOpenPeer(CreateDmRequest(peerId))
+            isClientContact -> api.openClient(OpenClientRequest(clientId = peerId))
+            else -> api.createDm(CreateDmRequest(peerId))
         }
         r.room ?: error(r.error ?: "Не удалось открыть диалог")
     }.mapError()
@@ -147,6 +164,83 @@ class ChatRepository(
             }
         }.mapError()
 
+    /**
+     * Загрузка файла с прогрессом (OkHttp multipart, как на вебе).
+     */
+    suspend fun sendFileWithProgress(
+        context: Context,
+        roomId: String,
+        uri: Uri,
+        caption: String?,
+        onProgress: (Float) -> Unit,
+    ): Result<MessageDto> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cr = context.contentResolver
+            val mime = cr.getType(uri) ?: "application/octet-stream"
+            val name = cr.query(uri, null, null, null, null)?.use { c ->
+                if (!c.moveToFirst()) return@use null
+                val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) c.getString(idx) else null
+            } ?: "file"
+
+            val tmp = File(context.cacheDir, "upload_${System.currentTimeMillis()}_${name.replace("/", "_")}")
+            cr.openInputStream(uri)!!.use { input ->
+                FileOutputStream(tmp).use { output -> input.copyTo(output) }
+            }
+            try {
+                val fileBody = CountingFileRequestBody(tmp, mime.toMediaTypeOrNull()) { done, total ->
+                    val p = if (total > 0) done.toFloat() / total else 0f
+                    onProgress(p)
+                }
+                val multipartBody = MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("file", name, fileBody)
+                    .apply {
+                        caption?.takeIf { it.isNotBlank() }?.let { addFormDataPart("text", it) }
+                    }
+                    .addFormDataPart("originalFilename", name)
+                    .build()
+
+                val enc = URLEncoder.encode(roomId, StandardCharsets.UTF_8.name())
+                val path = if (isClient()) {
+                    "client/rooms/$enc/messages/file"
+                } else {
+                    "rooms/$enc/messages/file"
+                }
+                val url = "${BuildConfig.API_BASE_URL.trimEnd('/')}/api/v1/$path"
+                val request = Request.Builder().url(url).post(multipartBody).build()
+                okHttp.newCall(request).execute().use { response ->
+                    val bodyStr = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) {
+                        val err = runCatching { org.json.JSONObject(bodyStr).optString("error") }.getOrNull().orEmpty()
+                        error(err.ifBlank { "HTTP ${response.code}" })
+                    }
+                    val r = json.decodeFromString(SendMessageResponse.serializer(), bodyStr)
+                    if (r.ok != true || r.message == null) error(r.error ?: "Файл не отправлен")
+                    r.message
+                }
+            } finally {
+                tmp.delete()
+            }
+        }.mapError()
+    }
+
+    suspend fun createGroup(
+        title: String,
+        memberIds: List<String>,
+        clientIds: List<String>,
+    ): Result<RoomDto> = runCatching {
+        if (isClient()) error("Недоступно")
+        val r = api.createGroup(
+            CreateGroupRequest(
+                title = title.trim(),
+                memberIds = memberIds,
+                clientIds = clientIds,
+            ),
+        )
+        r.room ?: error(r.error ?: "Не удалось создать группу")
+    }.mapError()
+
     suspend fun getGroupEdit(roomId: String): Result<GroupEditResponse> = runCatching {
         if (isClient()) error("Недоступно")
         api.groupEdit(roomId)
@@ -197,6 +291,19 @@ class ChatRepository(
         val r = api.deleteRoomAvatar(roomId)
         if (r.ok != true || r.room == null) error(r.error ?: "Не удалено")
         r.room
+    }.mapError()
+
+    suspend fun leaveGroup(roomId: String): Result<Unit> = runCatching {
+        if (isClient()) error("Недоступно")
+        val r = api.leaveRoom(roomId)
+        if (r.ok != true) error(r.error ?: "Не удалось выйти из группы")
+    }.mapError()
+
+    /** Удалить комнату (группу — только создатель; личный чат — участник). */
+    suspend fun deleteRoomChat(roomId: String): Result<Unit> = runCatching {
+        if (isClient()) error("Недоступно")
+        val r = api.deleteRoom(roomId)
+        if (r.ok != true) error(r.error ?: "Не удалось удалить чат")
     }.mapError()
 
     fun updateLastSeen(roomId: String, message: MessageDto) {

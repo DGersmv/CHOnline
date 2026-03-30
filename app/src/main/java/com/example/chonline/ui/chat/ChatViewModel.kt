@@ -31,11 +31,19 @@ class ChatViewModel(
     private val _sending = MutableStateFlow(false)
     val sending: StateFlow<Boolean> = _sending.asStateFlow()
 
+    /** null — нет загрузки файла; 0f..1f — прогресс multipart. */
+    private val _fileUploadProgress = MutableStateFlow<Float?>(null)
+    val fileUploadProgress: StateFlow<Float?> = _fileUploadProgress.asStateFlow()
+
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
     private val _room = MutableStateFlow<RoomDto?>(null)
     val room: StateFlow<RoomDto?> = _room.asStateFlow()
+
+    /** Комната удалена или пользователь вышел — закрыть экран чата */
+    private val _roomClosed = MutableStateFlow(false)
+    val roomClosed: StateFlow<Boolean> = _roomClosed.asStateFlow()
 
     val myUserId: String? get() = tokenStore.session.value?.userId
 
@@ -101,6 +109,11 @@ class ChatViewModel(
                         groupAvatarRev = ev.groupAvatarRev ?: base.groupAvatarRev,
                     )
                 }
+            }
+
+            is SocketEvent.RoomDeleted -> {
+                if (ev.roomId != roomId) return
+                _roomClosed.value = true
             }
 
             else -> Unit
@@ -190,17 +203,19 @@ class ChatViewModel(
         }
     }
 
-    fun sendFile(context: android.content.Context, uri: android.net.Uri) {
+    fun sendFileWithProgress(context: android.content.Context, uri: android.net.Uri, caption: String?) {
         viewModelScope.launch {
-            _sending.value = true
+            _fileUploadProgress.value = 0f
             _error.value = null
-            chatRepository.sendFile(context, roomId, uri)
+            chatRepository.sendFileWithProgress(context, roomId, uri, caption) { p ->
+                _fileUploadProgress.value = p
+            }
                 .onSuccess { msg ->
                     appendMessages(listOf(msg))
                     chatRepository.updateLastSeen(roomId, msg)
                 }
                 .onFailure { _error.value = it.message }
-            _sending.value = false
+            _fileUploadProgress.value = null
         }
     }
 

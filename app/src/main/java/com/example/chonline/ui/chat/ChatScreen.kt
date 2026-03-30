@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -28,6 +29,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -41,6 +43,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,7 +71,9 @@ fun ChatScreen(
     roomId: String,
     container: AppContainer,
     onBack: () -> Unit,
+    /** Создатель: «Изменить»; участник: «Группа» (выйти). */
     onEditGroup: (() -> Unit)? = null,
+    onOpenGroupAsMember: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val vm: ChatViewModel = viewModel(
@@ -77,9 +83,11 @@ fun ChatScreen(
     val messages by vm.messages.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
     val sending by vm.sending.collectAsStateWithLifecycle()
+    val fileUploadProgress by vm.fileUploadProgress.collectAsStateWithLifecycle()
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
     val err by vm.error.collectAsStateWithLifecycle()
     val room by vm.room.collectAsStateWithLifecycle()
+    val roomClosed by vm.roomClosed.collectAsStateWithLifecycle()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val imageLoader = rememberCoilWithAuth(container)
@@ -89,18 +97,39 @@ fun ChatScreen(
     var editText by remember { mutableStateOf("") }
     var deleteTargetId by remember { mutableStateOf<String?>(null) }
 
+    var pendingFileUri by remember { mutableStateOf<Uri?>(null) }
+    var fileCaption by remember { mutableStateOf("") }
+    var wasFileUploading by remember { mutableStateOf(false) }
+
     val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let { vm.sendFile(context, it) }
+        uri?.let {
+            pendingFileUri = it
+            fileCaption = ""
+        }
+    }
+
+    LaunchedEffect(fileUploadProgress) {
+        if (fileUploadProgress != null) wasFileUploading = true
+        if (wasFileUploading && fileUploadProgress == null) {
+            pendingFileUri = null
+            fileCaption = ""
+            wasFileUploading = false
+        }
     }
 
     LaunchedEffect(roomId) {
         vm.refreshRoomMeta()
     }
 
+    LaunchedEffect(roomClosed) {
+        if (roomClosed) onBack()
+    }
+
     val lastId = messages.lastOrNull()?.id
+    // reverseLayout: новые сообщения у нижнего края (над полем ввода), а не «вверху пустого экрана»
     LaunchedEffect(lastId) {
         if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+            listState.animateScrollToItem(0)
         }
     }
 
@@ -114,6 +143,12 @@ fun ChatScreen(
                 room?.createdBy != null &&
                 vm.myUserId != null &&
                 room?.createdBy == vm.myUserId
+            val showGroupMember = onOpenGroupAsMember != null &&
+                !isClient &&
+                room?.type == "group" &&
+                room?.createdBy != null &&
+                vm.myUserId != null &&
+                room?.createdBy != vm.myUserId
             TopAppBar(
                 title = { Text(barTitle) },
                 navigationIcon = {
@@ -123,6 +158,11 @@ fun ChatScreen(
                     if (showGroupEdit) {
                         TextButton(onClick = { onEditGroup?.invoke() }) {
                             Text("Изменить")
+                        }
+                    }
+                    if (showGroupMember) {
+                        TextButton(onClick = { onOpenGroupAsMember?.invoke() }) {
+                            Text("Группа")
                         }
                     }
                 },
@@ -151,17 +191,11 @@ fun ChatScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
+                reverseLayout = true,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (hasMore && messages.isNotEmpty()) {
-                    item {
-                        TextButton(
-                            onClick = { vm.loadOlder() },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Загрузить раньше") }
-                    }
-                }
-                items(messages, key = { it.id }) { msg ->
+                // Порядок: сначала новые (index 0 у нижнего края при reverseLayout)
+                items(messages.asReversed(), key = { it.id }) { msg ->
                     MessageBubble(
                         msg = msg,
                         isMine = vm.isMyMessage(msg),
@@ -177,6 +211,14 @@ fun ChatScreen(
                         onDelete = { deleteTargetId = msg.id },
                     )
                 }
+                if (hasMore && messages.isNotEmpty()) {
+                    item {
+                        TextButton(
+                            onClick = { vm.loadOlder() },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Загрузить раньше") }
+                    }
+                }
             }
             err?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(8.dp))
@@ -188,7 +230,10 @@ fun ChatScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                TextButton(onClick = { pickFile.launch("*/*") }, enabled = !sending) { Text("Файл") }
+                TextButton(
+                    onClick = { pickFile.launch("*/*") },
+                    enabled = !sending && fileUploadProgress == null,
+                ) { Text("Файл") }
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },
@@ -214,7 +259,7 @@ fun ChatScreen(
                         vm.sendText(input)
                         input = ""
                     },
-                    enabled = !sending && input.isNotBlank(),
+                    enabled = !sending && fileUploadProgress == null && input.isNotBlank(),
                 ) {
                     if (sending) CircularProgressIndicator(Modifier.padding(4.dp))
                     else Text("Отпр.")
@@ -245,6 +290,75 @@ fun ChatScreen(
             },
             dismissButton = {
                 TextButton(onClick = { editTarget = null }) { Text("Отмена") }
+            },
+        )
+    }
+
+    pendingFileUri?.let { uri ->
+        val cr = context.contentResolver
+        val mime = remember(uri) { cr.getType(uri) ?: "application/octet-stream" }
+        val displayName = remember(uri) {
+            cr.query(uri, null, null, null, null)?.use { c ->
+                if (!c.moveToFirst()) return@use "файл"
+                val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) c.getString(idx) else null
+            } ?: "файл"
+        }
+        val isImage = mime.startsWith("image/")
+        val uploading = fileUploadProgress != null
+        AlertDialog(
+            onDismissRequest = { if (!uploading) pendingFileUri = null },
+            title = { Text("Отправить файл") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (isImage) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(context).data(uri).crossfade(true).build(),
+                            contentDescription = null,
+                            imageLoader = imageLoader,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(180.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Fit,
+                        )
+                    } else {
+                        Text(displayName, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    OutlinedTextField(
+                        value = fileCaption,
+                        onValueChange = { fileCaption = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 4,
+                        enabled = !uploading,
+                        placeholder = { Text("Подпись (необязательно)") },
+                    )
+                    if (uploading) {
+                        val p = fileUploadProgress ?: 0f
+                        LinearProgressIndicator(
+                            progress = { p },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        vm.sendFileWithProgress(
+                            context,
+                            uri,
+                            fileCaption.trim().takeIf { it.isNotEmpty() },
+                        )
+                    },
+                    enabled = !uploading,
+                ) { Text("Отправить") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { pendingFileUri = null },
+                    enabled = !uploading,
+                ) { Text("Отмена") }
             },
         )
     }
@@ -296,7 +410,7 @@ private fun MessageBubble(
 ) {
     val bubbleColor = if (isMine) CorpChatColors.bgBubbleOut else CorpChatColors.bgBubbleIn
     val shape = RoundedCornerShape(12.dp)
-    val showMsgMenu = isMine && msg.msgType == "text"
+    val showMsgMenu = isMine && (msg.msgType == "text" || msg.msgType == "file")
     var menuExpanded by remember(msg.id) { mutableStateOf(false) }
     val contentEndPadding = if (showMsgMenu) 40.dp else 12.dp
     Column(
@@ -389,13 +503,15 @@ private fun MessageBubble(
                     expanded = menuExpanded,
                     onDismissRequest = { menuExpanded = false },
                 ) {
-                    DropdownMenuItem(
-                        text = { Text("Изменить") },
-                        onClick = {
-                            menuExpanded = false
-                            onEdit()
-                        },
-                    )
+                    if (msg.msgType == "text") {
+                        DropdownMenuItem(
+                            text = { Text("Изменить") },
+                            onClick = {
+                                menuExpanded = false
+                                onEdit()
+                            },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("Удалить") },
                         onClick = {
