@@ -80,7 +80,13 @@ fun MainShellScreen(
     onOpenChat: (String) -> Unit,
     onLogout: () -> Unit,
     onCreateGroup: () -> Unit = {},
+    onOpenAdminClients: () -> Unit = {},
 ) {
+    val session by container.tokenStore.session.collectAsStateWithLifecycle(initialValue = null)
+    val isAdmin =
+        !container.tokenStore.isClient() &&
+            session?.email?.trim()?.lowercase() == BuildConfig.ADMIN_EMAIL.trim().lowercase()
+
     val rooms by roomsViewModel.rooms.collectAsStateWithLifecycle()
     val employees by roomsViewModel.employees.collectAsStateWithLifecycle()
     val loading by roomsViewModel.loading.collectAsStateWithLifecycle()
@@ -170,6 +176,8 @@ fun MainShellScreen(
                         exitAfterSave = false,
                         showLogout = true,
                         onLogout = onLogout,
+                        isAdmin = isAdmin,
+                        onOpenAdminClients = onOpenAdminClients,
                     )
                 }
             }
@@ -272,7 +280,7 @@ private fun ChatsTabBody(
                                 showOnlineDot = peerOnline,
                             )
                         },
-                        headlineContent = { Text(room.title.ifBlank { room.id }) },
+                        headlineContent = { Text(chatListTitleForRoom(room, employees)) },
                         supportingContent = {
                             Text(
                                 room.lastPreview.orEmpty().ifBlank { "Нет сообщений" },
@@ -309,7 +317,7 @@ private fun ChatRowAvatar(
     imageLoader: ImageLoader,
     showOnlineDot: Boolean = false,
 ) {
-    val title = room.title.ifBlank { room.id }
+    val title = remember(room, employees) { chatListTitleForRoom(room, employees) }
     val initials = remember(title) { chatRowInitials(title) }
     val url = remember(room, employees, baseUrl, isClientApp, myUserId) {
         chatListAvatarUrl(room, employees, baseUrl, isClientApp, myUserId)
@@ -372,6 +380,27 @@ private fun chatRowInitials(title: String): String {
         parts.size == 1 -> parts[0].take(1).uppercase()
         else -> (parts[0].take(1) + parts[1].take(1)).uppercase()
     }
+}
+
+/**
+ * Для ЛС с [clientLinked], заголовок с сервера — имя сотрудника-собеседника, а аватар берётся с заказчика.
+ * Если в комнате ровно один связанный заказчик, показываем его имя в списке чатов.
+ */
+private fun chatListTitleForRoom(room: RoomDto, employees: List<EmployeeDto>): String {
+    val base = room.title.ifBlank { room.id }
+    if (room.type != "dm") return base
+    if (room.clientLinked != true) return base
+    val ids = room.linkedClientIds.orEmpty()
+    if (ids.size != 1) return base
+    val cid = ids[0]
+    val em = employees.find { it.id == cid && it.isClient } ?: return base
+    val n = em.name.trim()
+    if (n.isNotBlank()) return n
+    val an = em.adminName.trim()
+    if (an.isNotBlank()) return an
+    val email = (em.email ?: em.accountEmail).orEmpty().trim()
+    if (email.isNotBlank()) return email
+    return base
 }
 
 private fun pickLinkedClientId(room: RoomDto, employees: List<EmployeeDto>): String? {

@@ -165,4 +165,38 @@ interface CorpChatApi {
         @Part("text") text: RequestBody?,
         @Part("originalFilename") originalFilename: RequestBody?,
     ): SendMessageResponse
+
+    // --- Админ: заказчики (employee + JWT администратора) ---
+    @GET("admin/clients")
+    suspend fun adminClients(): List<AdminClientDto>
+
+    @POST("admin/clients")
+    suspend fun adminCreateClient(@Body body: CreateAdminClientRequest): CreateAdminClientResponse
+
+    @PUT("admin/clients/{id}")
+    suspend fun adminPatchClient(
+        @Path("id") id: String,
+        @Body body: PatchAdminClientRequest,
+    ): OkResponse
+
+    @PUT("admin/clients/{id}/password")
+    suspend fun adminSetClientPassword(
+        @Path("id") id: String,
+        @Body body: AdminClientPasswordRequest,
+    ): OkResponse
+
+    @GET("admin/clients/{id}/users")
+    suspend fun adminClientUsers(@Path("id") id: String): List<AdminVisibleUserDto>
+
+    @PUT("admin/clients/{id}/users")
+    suspend fun adminPutClientUsers(
+        @Path("id") id: String,
+        @Body body: AdminClientUsersRequest,
+    ): OkResponse
+
+    @DELETE("admin/clients/{id}")
+    suspend fun adminDeleteClient(@Path("id") id: String): OkResponse
+
+    @GET("admin/employees")
+    suspend fun adminEmployees(): List<AdminEmployeeRowDto>
 }

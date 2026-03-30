@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -36,6 +37,8 @@ fun ProfileScreen(
     exitAfterSave: Boolean = true,
     showLogout: Boolean = false,
     onLogout: () -> Unit = {},
+    isAdmin: Boolean = false,
+    onOpenAdminClients: () -> Unit = {},
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     var name by rememberSaveable { mutableStateOf("") }
@@ -117,6 +120,15 @@ fun ProfileScreen(
             else Text("Сохранить")
         }
         if (showLogout) {
+            if (isAdmin) {
+                Spacer(Modifier.height(16.dp))
+                OutlinedButton(
+                    onClick = onOpenAdminClients,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Заказчики (админ)")
+                }
+            }
             Spacer(Modifier.height(24.dp))
             TextButton(
                 onClick = onLogout,

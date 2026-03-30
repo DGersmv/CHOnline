@@ -14,6 +14,9 @@ val localProperties = Properties().apply {
 // Публичный origin как у Nginx (443), не :8788 — снаружи открыты только 80/443.
 val apiBaseUrl: String =
     (localProperties.getProperty("api.base.url") ?: "https://messenger.227.info").trim()
+// Email администратора (доступ к /admin/*), как VITE_ADMIN_EMAIL на вебе.
+val adminEmail: String =
+    (localProperties.getProperty("admin.email") ?: "admin@227.info").trim()
 
 android {
     namespace = "com.example.chonline"
@@ -28,6 +31,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Переопределение: local.properties → api.base.url=... (без /api/v1). Локально: http://10.0.2.2:8788
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
+        buildConfigField("String", "ADMIN_EMAIL", "\"${adminEmail.replace("\"", "\\\"")}\"")
     }
 
     buildTypes {

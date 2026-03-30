@@ -22,6 +22,7 @@ import com.example.chonline.ui.AppViewModelFactory
 import com.example.chonline.ui.auth.AuthViewModel
 import com.example.chonline.ui.auth.LoginScreen
 import com.example.chonline.ui.auth.VerifyScreen
+import com.example.chonline.ui.admin.AdminClientsScreen
 import com.example.chonline.ui.chat.ChatScreen
 import com.example.chonline.ui.main.MainShellScreen
 import com.example.chonline.ui.rooms.GroupCreateScreen
@@ -143,6 +144,9 @@ fun AppNavHost(container: AppContainer) {
                 onCreateGroup = {
                     nav.navigate("group-create") { launchSingleTop = true }
                 },
+                onOpenAdminClients = {
+                    nav.navigate("admin-clients") { launchSingleTop = true }
+                },
                 onLogout = {
                     scope.launch {
                         container.authRepository.logout()
@@ -153,6 +157,12 @@ fun AppNavHost(container: AppContainer) {
                         }
                     }
                 },
+            )
+        }
+        composable("admin-clients") {
+            AdminClientsScreen(
+                container = container,
+                onBack = { nav.popBackStack() },
             )
         }
         composable(

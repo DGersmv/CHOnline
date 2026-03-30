@@ -8,6 +8,7 @@ import com.example.chonline.data.remote.CorpChatApi
 import com.example.chonline.data.remote.createJson
 import com.example.chonline.data.remote.createOkHttpClient
 import com.example.chonline.data.remote.createRetrofit
+import com.example.chonline.data.repo.AdminRepository
 import com.example.chonline.data.repo.AuthRepository
 import com.example.chonline.data.repo.ChatRepository
 import com.example.chonline.data.socket.ChatSocketController
@@ -30,6 +31,7 @@ class AppContainer(context: Context) {
     )
 
     val authRepository = AuthRepository(api, tokenStore)
+    val adminRepository = AdminRepository(api)
     val chatRepository = ChatRepository(api, socketController, lastSeenStore, tokenStore, okHttp, json)
 
     val okHttpForImages = okHttp
