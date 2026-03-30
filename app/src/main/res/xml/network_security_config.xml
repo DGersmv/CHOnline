@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Прод: API через https://messenger.227.info — cleartext не нужен. Ниже — HTTP к IP/эмулятору для отладки. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">83.166.246.116</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+    <!-- Только debuggable-сборки: HTTP к любому хосту из api.base.url без правки domain-config -->
+    <debug-overrides>
+        <cleartextTrafficPermitted>true</cleartextTrafficPermitted>
+    </debug-overrides>
+</network-security-config>

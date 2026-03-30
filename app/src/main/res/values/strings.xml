@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">CHOnline</string>
+    <string name="app_password_prompt">Введите пароль приложения</string>
+    <string name="app_password_hint">Пароль</string>
+    <string name="submit_button">Продолжить</string>
+</resources>
