@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
@@ -31,7 +32,12 @@ fun LoginScreen(
     onCodeSent: (String) -> Unit,
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
-    var email by rememberSaveable { mutableStateOf("") }
+    var login by rememberSaveable { mutableStateOf("") }
+    var password by rememberSaveable { mutableStateOf("") }
+
+    LaunchedEffect(login) {
+        viewModel.onLoginInputChanged(login)
+    }
 
     Column(
         Modifier
@@ -42,32 +48,68 @@ fun LoginScreen(
     ) {
         Text("Вход в чат", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(8.dp))
+        val hint = when {
+            ui.loginTypeLoading -> "Проверка…"
+            ui.loginKind == LoginKind.Client -> "Заказчик: введите пароль"
+            else -> "Сотрудник: введите email — пришлём код"
+        }
         Text(
-            "Введите корпоративный email — пришлём код",
+            hint,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(24.dp))
         OutlinedTextField(
-            value = email,
-            onValueChange = { email = it },
+            value = login,
+            onValueChange = { login = it },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Email") },
+            label = { Text(if (ui.loginKind == LoginKind.Client) "Логин" else "Email") },
             singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            keyboardOptions = KeyboardOptions(keyboardType = if (ui.loginKind == LoginKind.Client) KeyboardType.Text else KeyboardType.Email),
+            enabled = !ui.loading,
         )
+        if (ui.loginKind == LoginKind.Client) {
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Пароль") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                enabled = !ui.loading,
+            )
+        }
         ui.error?.let {
             Spacer(Modifier.height(8.dp))
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
         Spacer(Modifier.height(16.dp))
+        val canSubmit = when (ui.loginKind) {
+            LoginKind.Client -> login.length >= 3 && password.isNotBlank()
+            LoginKind.Employee -> login.contains('@')
+            LoginKind.Unknown -> login.contains('@')
+        }
         Button(
-            onClick = { viewModel.sendCode(email) },
-            enabled = !ui.loading && email.contains('@'),
+            onClick = {
+                when (ui.loginKind) {
+                    LoginKind.Client -> viewModel.loginAsClient(login, password)
+                    else -> viewModel.sendCode(login)
+                }
+            },
+            enabled = !ui.loading && !ui.loginTypeLoading && canSubmit,
             modifier = Modifier.fillMaxWidth(),
         ) {
             if (ui.loading) CircularProgressIndicator(Modifier.height(20.dp))
-            else Text("Получить код")
+            else {
+                Text(
+                    when (ui.loginKind) {
+                        LoginKind.Client -> "Войти"
+                        else -> "Получить код"
+                    },
+                )
+            }
         }
     }
 

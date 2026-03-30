@@ -3,21 +3,31 @@ package com.example.chonline.ui.main
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -30,6 +40,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -37,12 +49,19 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.ImageLoader
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.example.chonline.BuildConfig
+import com.example.chonline.data.remote.EmployeeDto
 import com.example.chonline.data.remote.RoomDto
 import com.example.chonline.di.AppContainer
 import com.example.chonline.ui.contacts.EmployeesListContent
 import com.example.chonline.ui.profile.ProfileScreen
 import com.example.chonline.ui.profile.ProfileViewModel
 import com.example.chonline.ui.rooms.RoomsViewModel
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 private enum class MainTab {
     Contacts,
@@ -60,6 +79,7 @@ fun MainShellScreen(
     onLogout: () -> Unit,
 ) {
     val rooms by roomsViewModel.rooms.collectAsStateWithLifecycle()
+    val employees by roomsViewModel.employees.collectAsStateWithLifecycle()
     val loading by roomsViewModel.loading.collectAsStateWithLifecycle()
     val error by roomsViewModel.error.collectAsStateWithLifecycle()
     val online by roomsViewModel.online.collectAsStateWithLifecycle()
@@ -82,7 +102,6 @@ fun MainShellScreen(
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val topH = (maxHeight * 0.1f).coerceAtLeast(56.dp).coerceAtMost(120.dp)
-        val bottomH = (maxHeight * 0.1f).coerceAtLeast(56.dp).coerceAtMost(120.dp)
 
         Column(Modifier.fillMaxSize()) {
             TopSearchStatusBar(
@@ -104,6 +123,8 @@ fun MainShellScreen(
                 when (tab) {
                     MainTab.Chats -> ChatsTabBody(
                         rooms = filteredRooms,
+                        employees = employees,
+                        container = container,
                         loading = loading,
                         error = error,
                         onOpenChat = onOpenChat,
@@ -132,7 +153,7 @@ fun MainShellScreen(
                 onSelect = { tab = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(bottomH)
+                    .navigationBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 6.dp),
             )
         }
@@ -189,16 +210,37 @@ private fun TopSearchStatusBar(
 @Composable
 private fun ChatsTabBody(
     rooms: List<RoomDto>,
+    employees: List<EmployeeDto>,
+    container: AppContainer,
     loading: Boolean,
     error: String?,
     onOpenChat: (String) -> Unit,
 ) {
+    val ctx = LocalContext.current
+    val imageLoader = androidx.compose.runtime.remember(container.okHttpForImages) {
+        ImageLoader.Builder(ctx)
+            .okHttpClient(container.okHttpForImages)
+            .build()
+    }
+    val base = BuildConfig.API_BASE_URL.trimEnd('/')
+    val isClientApp = container.tokenStore.isClient()
+    val myId = container.tokenStore.session.value?.userId
     Box(Modifier.fillMaxSize()) {
         when {
             loading && rooms.isEmpty() -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             else -> LazyColumn(Modifier.fillMaxSize()) {
                 items(rooms, key = { it.id }) { room ->
                     ListItem(
+                        leadingContent = {
+                            ChatRowAvatar(
+                                room = room,
+                                employees = employees,
+                                baseUrl = base,
+                                isClientApp = isClientApp,
+                                myUserId = myId,
+                                imageLoader = imageLoader,
+                            )
+                        },
                         headlineContent = { Text(room.title.ifBlank { room.id }) },
                         supportingContent = {
                             Text(
@@ -224,6 +266,100 @@ private fun ChatsTabBody(
             )
         }
     }
+}
+
+@Composable
+private fun ChatRowAvatar(
+    room: RoomDto,
+    employees: List<EmployeeDto>,
+    baseUrl: String,
+    isClientApp: Boolean,
+    myUserId: String?,
+    imageLoader: ImageLoader,
+) {
+    val title = room.title.ifBlank { room.id }
+    val initials = remember(title) { chatRowInitials(title) }
+    val url = remember(room, employees, baseUrl, isClientApp, myUserId) {
+        chatListAvatarUrl(room, employees, baseUrl, isClientApp, myUserId)
+    }
+    val size = 44.dp
+    if (url != null) {
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(url)
+                .crossfade(true)
+                .build(),
+            contentDescription = null,
+            imageLoader = imageLoader,
+            modifier = Modifier
+                .size(size)
+                .clip(CircleShape),
+            contentScale = ContentScale.Crop,
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .size(size)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                initials,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private fun chatRowInitials(title: String): String {
+    val parts = title.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+    return when {
+        parts.isEmpty() -> "?"
+        parts.size == 1 -> parts[0].take(1).uppercase()
+        else -> (parts[0].take(1) + parts[1].take(1)).uppercase()
+    }
+}
+
+private fun pickLinkedClientId(room: RoomDto, employees: List<EmployeeDto>): String? {
+    val ids = room.linkedClientIds ?: return null
+    for (id in ids) {
+        val e = employees.find { it.id == id && it.isClient }
+        if ((e?.hasAvatar ?: 0) != 0) return id
+    }
+    return ids.firstOrNull()
+}
+
+private fun chatListAvatarUrl(
+    room: RoomDto,
+    employees: List<EmployeeDto>,
+    base: String,
+    isClientApp: Boolean,
+    myUserId: String?,
+): String? {
+    fun enc(s: String) = URLEncoder.encode(s, StandardCharsets.UTF_8.name())
+    fun revPart(r: String?) = r?.takeIf { it.isNotBlank() }?.let { "?rev=" + enc(it) }.orEmpty()
+
+    if (room.type == "group" && (room.hasGroupAvatar ?: 0) != 0) {
+        val prefix = if (isClientApp) "$base/api/v1/client" else "$base/api/v1"
+        return "$prefix/rooms/${enc(room.id)}/avatar${revPart(room.groupAvatarRev)}"
+    }
+    if (!isClientApp && room.clientLinked == true) {
+        val cid = pickLinkedClientId(room, employees) ?: return null
+        val em = employees.find { it.id == cid } ?: return null
+        if ((em.hasAvatar ?: 0) == 0) return null
+        return "$base/api/v1/clients/${enc(cid)}/avatar${revPart(em.avatarRev)}"
+    }
+    if (room.type == "dm") {
+        val peer = room.dmPeerUserId ?: return null
+        if (myUserId != null && peer == myUserId) return null
+        val em = employees.find { it.id == peer && !it.isClient } ?: return null
+        if ((em.hasAvatar ?: 0) == 0) return null
+        val path = if (isClientApp) "client/users" else "users"
+        return "$base/api/v1/$path/${enc(peer)}/avatar${revPart(em.avatarRev)}"
+    }
+    return null
 }
 
 @Composable
@@ -260,20 +396,22 @@ private fun GlassBottomNav(
             .clip(shape)
             .background(glass)
             .border(1.dp, borderColor, shape)
-            .padding(horizontal = 6.dp, vertical = 6.dp),
+            .height(84.dp)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        GlassNavItem("Контакты", selected == MainTab.Contacts) { onSelect(MainTab.Contacts) }
-        GlassNavItem("Звонки", selected == MainTab.Calls) { onSelect(MainTab.Calls) }
-        GlassNavItem("Чаты", selected == MainTab.Chats) { onSelect(MainTab.Chats) }
-        GlassNavItem("Настройки", selected == MainTab.Settings) { onSelect(MainTab.Settings) }
+        GlassNavItem(Icons.Filled.Person, "Контакты", selected == MainTab.Contacts) { onSelect(MainTab.Contacts) }
+        GlassNavItem(Icons.Filled.Call, "Звонки", selected == MainTab.Calls) { onSelect(MainTab.Calls) }
+        GlassNavItem(Icons.Filled.Chat, "Чаты", selected == MainTab.Chats) { onSelect(MainTab.Chats) }
+        GlassNavItem(Icons.Filled.Settings, "Настройки", selected == MainTab.Settings) { onSelect(MainTab.Settings) }
     }
 }
 
 @Composable
 private fun GlassNavItem(
-    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
@@ -284,20 +422,19 @@ private fun GlassNavItem(
     }
     Box(
         Modifier
-            .widthIn(max = 96.dp)
+            .widthIn(max = 72.dp)
+            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(bg)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .padding(10.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            modifier = Modifier.size(28.dp),
+            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

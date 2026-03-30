@@ -22,12 +22,12 @@ class ProfileViewModel(
     fun refresh() {
         viewModelScope.launch {
             _ui.value = _ui.value.copy(loading = true, error = null)
-            auth.loadMe()
-                .onSuccess { me ->
+            auth.loadProfile()
+                .onSuccess { p ->
                     _ui.value = _ui.value.copy(
                         loading = false,
-                        name = me.name,
-                        phone = me.phone,
+                        name = p.name,
+                        phone = p.phone,
                     )
                 }
                 .onFailure { e ->

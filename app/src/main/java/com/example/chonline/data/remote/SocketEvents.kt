@@ -1,5 +1,6 @@
 package com.example.chonline.data.remote
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -23,4 +24,23 @@ data class OnlineUserDto(
     val name: String = "",
     val phone: String = "",
     val email: String = "",
+)
+
+@Serializable
+data class MessageDeletePayload(
+    val id: String,
+    val roomId: String,
+)
+
+@Serializable
+data class RoomPatchPayload(
+    val roomId: String,
+    val title: String? = null,
+    @SerialName("hasGroupAvatar") val hasGroupAvatar: Int? = null,
+    @SerialName("groupAvatarRev") val groupAvatarRev: String? = null,
+)
+
+@Serializable
+data class RoomDeletedPayload(
+    val roomId: String,
 )

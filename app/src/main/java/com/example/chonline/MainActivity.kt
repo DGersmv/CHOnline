@@ -7,10 +7,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import com.example.chonline.di.AppContainer
 import com.example.chonline.ui.navigation.AppNavHost
 import com.example.chonline.ui.theme.CHOnlineTheme
+import com.example.chonline.ui.theme.CorpChatColors
 
 class MainActivity : ComponentActivity() {
 
@@ -24,7 +24,7 @@ class MainActivity : ComponentActivity() {
             CHOnlineTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = Color.Transparent,
+                    color = CorpChatColors.bgDeep,
                 ) {
                     AppNavHost(container = appContainer)
                 }

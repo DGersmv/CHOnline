@@ -64,7 +64,13 @@ fun createOkHttpClient(
         if (response.code != 401) return@Interceptor response
 
         val path = authed.url.encodedPath
-        if (path.contains("auth/send") || path.contains("auth/verify") || path.contains("auth/refresh")) {
+        if (
+            path.contains("auth/send") ||
+            path.contains("auth/verify") ||
+            path.contains("auth/refresh") ||
+            path.contains("auth/login-type") ||
+            path.contains("auth/client-login")
+        ) {
             return@Interceptor response
         }
 

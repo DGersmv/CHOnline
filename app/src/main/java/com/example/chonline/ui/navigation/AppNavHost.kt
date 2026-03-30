@@ -24,6 +24,7 @@ import com.example.chonline.ui.auth.LoginScreen
 import com.example.chonline.ui.auth.VerifyScreen
 import com.example.chonline.ui.chat.ChatScreen
 import com.example.chonline.ui.main.MainShellScreen
+import com.example.chonline.ui.rooms.GroupEditScreen
 import com.example.chonline.ui.profile.ProfileScreen
 import com.example.chonline.ui.profile.ProfileViewModel
 import com.example.chonline.ui.rooms.RoomsViewModel
@@ -62,8 +63,8 @@ fun AppNavHost(container: AppContainer) {
                     }
                     return@LaunchedEffect
                 }
-                val me = container.authRepository.loadMe().getOrNull()
-                val needProfile = me == null || me.name.isBlank() || me.phone.isBlank()
+                val snap = container.authRepository.loadProfileForStartup().getOrNull()
+                val needProfile = snap == null || snap.name.isBlank() || snap.phone.isBlank()
                 if (needProfile) {
                     nav.navigate("profile") {
                         popUpTo("start") { inclusive = true }
@@ -79,6 +80,15 @@ fun AppNavHost(container: AppContainer) {
         }
         composable("login") {
             val vm: AuthViewModel = viewModel(factory = factory)
+            val authUi by vm.ui.collectAsStateWithLifecycle()
+            LaunchedEffect(authUi.loggedIn) {
+                if (!authUi.loggedIn) return@LaunchedEffect
+                vm.consumeLoggedIn()
+                nav.navigate("start") {
+                    popUpTo("login") { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
             LoginScreen(
                 viewModel = vm,
                 onCodeSent = { email ->
@@ -148,6 +158,22 @@ fun AppNavHost(container: AppContainer) {
             val enc = entry.arguments?.getString("roomIdEnc")!!
             val roomId = URLDecoder.decode(enc, StandardCharsets.UTF_8.name())
             ChatScreen(
+                roomId = roomId,
+                container = container,
+                onBack = { nav.popBackStack() },
+                onEditGroup = {
+                    val e = URLEncoder.encode(roomId, StandardCharsets.UTF_8.name())
+                    nav.navigate("group-edit/$e")
+                },
+            )
+        }
+        composable(
+            route = "group-edit/{roomIdEnc}",
+            arguments = listOf(navArgument("roomIdEnc") { type = NavType.StringType }),
+        ) { entry ->
+            val enc = entry.arguments?.getString("roomIdEnc")!!
+            val roomId = URLDecoder.decode(enc, StandardCharsets.UTF_8.name())
+            GroupEditScreen(
                 roomId = roomId,
                 container = container,
                 onBack = { nav.popBackStack() },

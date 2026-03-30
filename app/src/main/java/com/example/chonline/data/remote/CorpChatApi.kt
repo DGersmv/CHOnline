@@ -3,8 +3,10 @@ package com.example.chonline.data.remote
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.Multipart
+import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Part
@@ -13,11 +15,17 @@ import retrofit2.http.Query
 
 interface CorpChatApi {
 
+    @GET("auth/login-type")
+    suspend fun loginType(@Query("login") login: String): LoginTypeResponse
+
     @POST("auth/send")
     suspend fun sendCode(@Body body: SendCodeRequest): SendCodeResponse
 
     @POST("auth/verify")
     suspend fun verify(@Body body: VerifyRequest): VerifyResponse
+
+    @POST("auth/client-login")
+    suspend fun clientLogin(@Body body: ClientLoginRequest): ClientAuthResponse
 
     @POST("auth/refresh")
     suspend fun refresh(@Body body: RefreshRequest): RefreshResponse
@@ -37,6 +45,25 @@ interface CorpChatApi {
     @GET("rooms")
     suspend fun rooms(): RoomsResponse
 
+    @GET("rooms/{roomId}/group-edit")
+    suspend fun groupEdit(@Path("roomId", encoded = true) roomId: String): GroupEditResponse
+
+    @PATCH("rooms/{roomId}")
+    suspend fun patchRoom(
+        @Path("roomId", encoded = true) roomId: String,
+        @Body body: PatchRoomRequest,
+    ): RoomMutationResponse
+
+    @Multipart
+    @POST("rooms/{roomId}/avatar")
+    suspend fun uploadRoomAvatar(
+        @Path("roomId", encoded = true) roomId: String,
+        @Part photo: MultipartBody.Part,
+    ): RoomMutationResponse
+
+    @DELETE("rooms/{roomId}/avatar")
+    suspend fun deleteRoomAvatar(@Path("roomId", encoded = true) roomId: String): RoomMutationResponse
+
     @POST("rooms/dm")
     suspend fun createDm(@Body body: CreateDmRequest): CreateDmResponse
 
@@ -53,9 +80,73 @@ interface CorpChatApi {
         @Body body: SendTextRequest,
     ): SendMessageResponse
 
+    @PATCH("rooms/{roomId}/messages/{messageId}")
+    suspend fun editMessage(
+        @Path("roomId", encoded = true) roomId: String,
+        @Path("messageId", encoded = true) messageId: String,
+        @Body body: SendTextRequest,
+    ): SendMessageResponse
+
+    @DELETE("rooms/{roomId}/messages/{messageId}")
+    suspend fun deleteMessage(
+        @Path("roomId", encoded = true) roomId: String,
+        @Path("messageId", encoded = true) messageId: String,
+    ): OkResponse
+
     @Multipart
     @POST("rooms/{roomId}/messages/file")
     suspend fun sendFile(
+        @Path("roomId", encoded = true) roomId: String,
+        @Part file: MultipartBody.Part,
+        @Part("text") text: RequestBody?,
+        @Part("originalFilename") originalFilename: RequestBody?,
+    ): SendMessageResponse
+
+    // --- Заказчик ---
+    @GET("client/me")
+    suspend fun clientMe(): ClientProfileDto
+
+    @PUT("client/profile")
+    suspend fun updateClientProfile(@Body body: ClientProfileUpdateRequest): ClientProfileDto
+
+    @GET("client/employees")
+    suspend fun clientEmployees(): List<ClientEmployeeDto>
+
+    @GET("client/rooms")
+    suspend fun clientRooms(): RoomsResponse
+
+    @POST("client/rooms/open-peer")
+    suspend fun clientOpenPeer(@Body body: CreateDmRequest): CreateDmResponse
+
+    @GET("client/rooms/{roomId}/messages")
+    suspend fun clientMessages(
+        @Path("roomId", encoded = true) roomId: String,
+        @Query("limit") limit: Int = 50,
+        @Query("before") before: String? = null,
+    ): MessagesResponse
+
+    @POST("client/rooms/{roomId}/messages")
+    suspend fun clientSendText(
+        @Path("roomId", encoded = true) roomId: String,
+        @Body body: SendTextRequest,
+    ): SendMessageResponse
+
+    @PATCH("client/rooms/{roomId}/messages/{messageId}")
+    suspend fun clientEditMessage(
+        @Path("roomId", encoded = true) roomId: String,
+        @Path("messageId", encoded = true) messageId: String,
+        @Body body: SendTextRequest,
+    ): SendMessageResponse
+
+    @DELETE("client/rooms/{roomId}/messages/{messageId}")
+    suspend fun clientDeleteMessage(
+        @Path("roomId", encoded = true) roomId: String,
+        @Path("messageId", encoded = true) messageId: String,
+    ): OkResponse
+
+    @Multipart
+    @POST("client/rooms/{roomId}/messages/file")
+    suspend fun clientSendFile(
         @Path("roomId", encoded = true) roomId: String,
         @Part file: MultipartBody.Part,
         @Part("text") text: RequestBody?,

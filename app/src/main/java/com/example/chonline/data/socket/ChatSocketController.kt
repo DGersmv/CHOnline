@@ -2,9 +2,12 @@ package com.example.chonline.data.socket
 
 import com.example.chonline.data.local.LastSeenStore
 import com.example.chonline.data.local.TokenStore
+import com.example.chonline.data.remote.MessageDeletePayload
 import com.example.chonline.data.remote.MessageDto
 import com.example.chonline.data.remote.MissedMessagesPayload
 import com.example.chonline.data.remote.OnlinePayload
+import com.example.chonline.data.remote.RoomDeletedPayload
+import com.example.chonline.data.remote.RoomPatchPayload
 import com.example.chonline.data.remote.SystemPayload
 import com.example.chonline.data.remote.createJson
 import io.socket.client.IO
@@ -21,6 +24,15 @@ import java.net.URI
 
 sealed interface SocketEvent {
     data class Message(val dto: MessageDto) : SocketEvent
+    data class MessageEdit(val dto: MessageDto) : SocketEvent
+    data class MessageDelete(val roomId: String, val messageId: String) : SocketEvent
+    data class RoomPatch(
+        val roomId: String,
+        val title: String?,
+        val hasGroupAvatar: Int?,
+        val groupAvatarRev: String?,
+    ) : SocketEvent
+    data class RoomDeleted(val roomId: String) : SocketEvent
     data class Missed(val roomId: String, val messages: List<MessageDto>) : SocketEvent
     data class System(val roomId: String?, val text: String) : SocketEvent
     data class Online(val payload: OnlinePayload) : SocketEvent
@@ -70,6 +82,47 @@ class ChatSocketController(
             val dto = runCatching { json.decodeFromString(MessageDto.serializer(), raw) }.getOrNull()
                 ?: return@on
             scope.launch { _events.emit(SocketEvent.Message(dto)) }
+        }
+
+        s.on("msg_edit") { args ->
+            if (args.isEmpty()) return@on
+            val raw = (args[0] as? JSONObject)?.toString() ?: return@on
+            val dto = runCatching { json.decodeFromString(MessageDto.serializer(), raw) }.getOrNull()
+                ?: return@on
+            scope.launch { _events.emit(SocketEvent.MessageEdit(dto)) }
+        }
+
+        s.on("msg_delete") { args ->
+            if (args.isEmpty()) return@on
+            val raw = (args[0] as? JSONObject)?.toString() ?: return@on
+            val p = runCatching { json.decodeFromString(MessageDeletePayload.serializer(), raw) }.getOrNull()
+                ?: return@on
+            scope.launch { _events.emit(SocketEvent.MessageDelete(p.roomId, p.id)) }
+        }
+
+        s.on("room_patch") { args ->
+            if (args.isEmpty()) return@on
+            val raw = (args[0] as? JSONObject)?.toString() ?: return@on
+            val p = runCatching { json.decodeFromString(RoomPatchPayload.serializer(), raw) }.getOrNull()
+                ?: return@on
+            scope.launch {
+                _events.emit(
+                    SocketEvent.RoomPatch(
+                        roomId = p.roomId,
+                        title = p.title,
+                        hasGroupAvatar = p.hasGroupAvatar,
+                        groupAvatarRev = p.groupAvatarRev,
+                    ),
+                )
+            }
+        }
+
+        s.on("room_deleted") { args ->
+            if (args.isEmpty()) return@on
+            val raw = (args[0] as? JSONObject)?.toString() ?: return@on
+            val p = runCatching { json.decodeFromString(RoomDeletedPayload.serializer(), raw) }.getOrNull()
+                ?: return@on
+            scope.launch { _events.emit(SocketEvent.RoomDeleted(p.roomId)) }
         }
 
         s.on("missed_messages") { args ->

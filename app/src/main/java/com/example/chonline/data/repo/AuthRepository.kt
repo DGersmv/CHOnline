@@ -1,6 +1,9 @@
 package com.example.chonline.data.repo
 
 import com.example.chonline.data.local.TokenStore
+import com.example.chonline.data.remote.ClientLoginRequest
+import com.example.chonline.data.remote.ClientProfileDto
+import com.example.chonline.data.remote.ClientProfileUpdateRequest
 import com.example.chonline.data.remote.CorpChatApi
 import com.example.chonline.data.remote.LogoutRequest
 import com.example.chonline.data.remote.MeResponse
@@ -13,6 +16,10 @@ class AuthRepository(
     private val api: CorpChatApi,
     private val tokenStore: TokenStore,
 ) {
+
+    suspend fun loginType(login: String): Result<String> = runCatching {
+        api.loginType(login.trim().lowercase()).type
+    }.mapError()
 
     suspend fun sendCode(email: String): Result<Unit> = runCatching {
         val r = api.sendCode(SendCodeRequest(email.trim().lowercase()))
@@ -41,12 +48,71 @@ class AuthRepository(
         )
     }.mapError()
 
+    suspend fun clientLogin(login: String, password: String): Result<Unit> = runCatching {
+        val r = api.clientLogin(
+            ClientLoginRequest(
+                login = login.trim().lowercase(),
+                password = password,
+                deviceId = tokenStore.deviceId(),
+            ),
+        )
+        if (r.ok != true || r.token == null || r.refreshToken == null || r.client == null) {
+            error(r.error ?: "Неверный логин или пароль")
+        }
+        val c = r.client
+        tokenStore.saveClientSession(
+            access = r.token,
+            refresh = r.refreshToken,
+            clientId = c.id,
+            login = c.login,
+            name = c.name,
+        )
+    }.mapError()
+
     suspend fun loadMe(): Result<MeResponse> = runCatching {
+        if (tokenStore.isClient()) error("employee only")
         api.me()
     }.mapError()
 
-    suspend fun updateProfile(name: String, phone: String): Result<MeResponse> = runCatching {
-        api.updateProfile(ProfileUpdateRequest(name.trim(), phone.trim()))
+    /** Имя и телефон для экрана профиля и навигации. */
+    suspend fun loadProfile(): Result<ProfileFields> = runCatching {
+        if (tokenStore.isClient()) {
+            val c = api.clientMe()
+            ProfileFields(name = c.name, phone = c.phone)
+        } else {
+            val m = api.me()
+            ProfileFields(name = m.name, phone = m.phone)
+        }
+    }.mapError()
+
+    /** Старт: нужно ли показывать обязательное заполнение профиля. */
+    suspend fun loadProfileForStartup(): Result<ProfileSnapshot> = runCatching {
+        if (tokenStore.isClient()) {
+            val c = api.clientMe()
+            ProfileSnapshot(
+                name = c.name,
+                phone = c.phone,
+                isClient = true,
+            )
+        } else {
+            val m = api.me()
+            ProfileSnapshot(
+                name = m.name,
+                phone = m.phone,
+                isClient = false,
+            )
+        }
+    }.mapError()
+
+    data class ProfileFields(val name: String, val phone: String)
+
+    suspend fun updateProfile(name: String, phone: String): Result<Unit> = runCatching {
+        if (tokenStore.isClient()) {
+            api.updateClientProfile(ClientProfileUpdateRequest(name.trim(), phone.trim()))
+        } else {
+            api.updateProfile(ProfileUpdateRequest(name.trim(), phone.trim()))
+        }
+        Unit
     }.mapError()
 
     suspend fun logout() {
@@ -80,4 +146,10 @@ class AuthRepository(
             null
         }
     }
+
+    data class ProfileSnapshot(
+        val name: String,
+        val phone: String,
+        val isClient: Boolean,
+    )
 }

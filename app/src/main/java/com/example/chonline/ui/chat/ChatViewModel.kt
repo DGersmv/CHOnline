@@ -4,11 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.chonline.data.local.TokenStore
 import com.example.chonline.data.remote.MessageDto
+import com.example.chonline.data.remote.RoomDto
 import com.example.chonline.data.repo.ChatRepository
 import com.example.chonline.data.socket.SocketEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class ChatViewModel(
@@ -32,13 +34,35 @@ class ChatViewModel(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    private val _room = MutableStateFlow<RoomDto?>(null)
+    val room: StateFlow<RoomDto?> = _room.asStateFlow()
+
     val myUserId: String? get() = tokenStore.session.value?.userId
 
     init {
         viewModelScope.launch {
             chatRepository.socketEvents.collect { handleSocket(it) }
         }
+        refreshRoomMeta()
         loadInitial()
+    }
+
+    fun refreshRoomMeta() {
+        viewModelScope.launch {
+            chatRepository.loadRooms()
+                .onSuccess { list ->
+                    _room.value = list.find { it.id == roomId }
+                }
+        }
+    }
+
+    fun isMyMessage(msg: MessageDto): Boolean {
+        val s = tokenStore.session.value ?: return false
+        return if (tokenStore.isClient()) {
+            msg.fromClientId != null && msg.fromClientId == s.userId
+        } else {
+            msg.userId == s.userId && msg.fromClientId.isNullOrBlank()
+        }
     }
 
     private fun handleSocket(ev: SocketEvent) {
@@ -49,6 +73,16 @@ class ChatViewModel(
                 chatRepository.updateLastSeen(roomId, ev.dto)
             }
 
+            is SocketEvent.MessageEdit -> {
+                if (ev.dto.roomId != roomId) return
+                applyEdit(ev.dto)
+            }
+
+            is SocketEvent.MessageDelete -> {
+                if (ev.roomId != roomId) return
+                removeById(ev.messageId)
+            }
+
             is SocketEvent.Missed -> {
                 if (ev.roomId != roomId) return
                 appendMessages(ev.messages)
@@ -57,8 +91,29 @@ class ChatViewModel(
                 }
             }
 
+            is SocketEvent.RoomPatch -> {
+                if (ev.roomId != roomId) return
+                _room.update { cur ->
+                    val base = cur ?: return@update null
+                    base.copy(
+                        title = ev.title ?: base.title,
+                        hasGroupAvatar = ev.hasGroupAvatar ?: base.hasGroupAvatar,
+                        groupAvatarRev = ev.groupAvatarRev ?: base.groupAvatarRev,
+                    )
+                }
+            }
+
             else -> Unit
         }
+    }
+
+    private fun applyEdit(updated: MessageDto) {
+        val list = _messages.value.map { if (it.id == updated.id) updated else it }
+        _messages.value = list.sortedBy { it.time }
+    }
+
+    private fun removeById(id: String) {
+        _messages.value = _messages.value.filter { it.id != id }
     }
 
     private fun appendMessages(incoming: List<MessageDto>) {
@@ -107,6 +162,29 @@ class ChatViewModel(
                     appendMessages(listOf(msg))
                     chatRepository.updateLastSeen(roomId, msg)
                 }
+                .onFailure { _error.value = it.message }
+            _sending.value = false
+        }
+    }
+
+    fun editMessage(messageId: String, text: String) {
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            _sending.value = true
+            _error.value = null
+            chatRepository.editMessage(roomId, messageId, text)
+                .onSuccess { applyEdit(it) }
+                .onFailure { _error.value = it.message }
+            _sending.value = false
+        }
+    }
+
+    fun deleteMessage(messageId: String) {
+        viewModelScope.launch {
+            _sending.value = true
+            _error.value = null
+            chatRepository.deleteMessage(roomId, messageId)
+                .onSuccess { removeById(messageId) }
                 .onFailure { _error.value = it.message }
             _sending.value = false
         }
