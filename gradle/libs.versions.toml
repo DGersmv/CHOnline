@@ -18,6 +18,7 @@ securityCrypto = "1.1.0"
 coroutines = "1.9.0"
 retrofitKotlinxConverter = "1.0.0"
 rustorePush = "2.1.1"
+webrtc = "144.7559.01"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -48,6 +49,7 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 socket-io-client = { group = "io.socket", name = "socket.io-client", version.ref = "socketIo" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 rustore-pushclient = { group = "ru.rustore.sdk", name = "pushclient", version.ref = "rustorePush" }
+google-webrtc = { group = "io.github.webrtc-sdk", name = "android", version.ref = "webrtc" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

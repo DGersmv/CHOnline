@@ -36,6 +36,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.UUID
 
 class ChatRepository(
     private val api: CorpChatApi,
@@ -55,6 +56,27 @@ class ChatRepository(
     fun disconnectSocket() = socket.disconnect()
 
     fun syncRoomsSeen() = socket.emitRoomsSync()
+
+    fun startCall(toUserId: String, roomId: String, mode: String = "audio"): String {
+        val callId = UUID.randomUUID().toString()
+        socket.emitCallInvite(callId = callId, toUserId = toUserId, roomId = roomId, mode = mode)
+        return callId
+    }
+
+    fun acceptCall(callId: String) = socket.emitCallAccept(callId)
+
+    fun rejectCall(callId: String) = socket.emitCallReject(callId)
+
+    fun endCall(callId: String) = socket.emitCallEnd(callId)
+
+    fun sendCallOffer(callId: String, toUserId: String, sdp: String) =
+        socket.emitCallOffer(callId, toUserId, sdp)
+
+    fun sendCallAnswer(callId: String, toUserId: String, sdp: String) =
+        socket.emitCallAnswer(callId, toUserId, sdp)
+
+    fun sendCallIce(callId: String, toUserId: String, candidate: String) =
+        socket.emitCallIce(callId, toUserId, candidate)
 
     suspend fun loadRooms(): Result<List<RoomDto>> = runCatching {
         if (isClient()) api.clientRooms().rooms else api.rooms().rooms

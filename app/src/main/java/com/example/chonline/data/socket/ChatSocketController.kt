@@ -36,6 +36,22 @@ sealed interface SocketEvent {
     data class Missed(val roomId: String, val messages: List<MessageDto>) : SocketEvent
     data class System(val roomId: String?, val text: String) : SocketEvent
     data class Online(val payload: OnlinePayload) : SocketEvent
+    data class CallInvite(
+        val callId: String,
+        val roomId: String,
+        val fromUserId: String,
+        val fromName: String,
+        val mode: String,
+        val ts: String,
+    ) : SocketEvent
+    data class CallRinging(val callId: String, val toUserId: String) : SocketEvent
+    data class CallAccept(val callId: String, val fromUserId: String) : SocketEvent
+    data class CallReject(val callId: String, val fromUserId: String) : SocketEvent
+    data class CallMissed(val callId: String) : SocketEvent
+    data class CallEnd(val callId: String, val status: String) : SocketEvent
+    data class CallOffer(val callId: String, val fromUserId: String, val sdp: String) : SocketEvent
+    data class CallAnswer(val callId: String, val fromUserId: String, val sdp: String) : SocketEvent
+    data class CallIce(val callId: String, val fromUserId: String, val candidate: String) : SocketEvent
     data object Connected : SocketEvent
     data object Disconnected : SocketEvent
 }
@@ -153,6 +169,85 @@ class ChatSocketController(
             scope.launch { _events.emit(SocketEvent.Online(payload)) }
         }
 
+        s.on("call:invite") { args ->
+            val p = args.firstOrNull() as? JSONObject ?: return@on
+            scope.launch {
+                _events.emit(
+                    SocketEvent.CallInvite(
+                        callId = p.optString("callId"),
+                        roomId = p.optString("roomId"),
+                        fromUserId = p.optString("fromUserId"),
+                        fromName = p.optString("fromName"),
+                        mode = p.optString("mode", "audio"),
+                        ts = p.optString("ts"),
+                    ),
+                )
+            }
+        }
+        s.on("call:ringing") { args ->
+            val p = args.firstOrNull() as? JSONObject ?: return@on
+            scope.launch { _events.emit(SocketEvent.CallRinging(p.optString("callId"), p.optString("toUserId"))) }
+        }
+        s.on("call:accept") { args ->
+            val p = args.firstOrNull() as? JSONObject ?: return@on
+            scope.launch { _events.emit(SocketEvent.CallAccept(p.optString("callId"), p.optString("fromUserId"))) }
+        }
+        s.on("call:reject") { args ->
+            val p = args.firstOrNull() as? JSONObject ?: return@on
+            scope.launch { _events.emit(SocketEvent.CallReject(p.optString("callId"), p.optString("fromUserId"))) }
+        }
+        s.on("call:missed") { args ->
+            val p = args.firstOrNull() as? JSONObject ?: return@on
+            scope.launch { _events.emit(SocketEvent.CallMissed(p.optString("callId"))) }
+        }
+        s.on("call:end") { args ->
+            val p = args.firstOrNull() as? JSONObject ?: return@on
+            scope.launch {
+                _events.emit(
+                    SocketEvent.CallEnd(
+                        callId = p.optString("callId"),
+                        status = p.optString("status", "ended"),
+                    ),
+                )
+            }
+        }
+        s.on("call:offer") { args ->
+            val p = args.firstOrNull() as? JSONObject ?: return@on
+            scope.launch {
+                _events.emit(
+                    SocketEvent.CallOffer(
+                        callId = p.optString("callId"),
+                        fromUserId = p.optString("fromUserId"),
+                        sdp = p.optString("sdp"),
+                    ),
+                )
+            }
+        }
+        s.on("call:answer") { args ->
+            val p = args.firstOrNull() as? JSONObject ?: return@on
+            scope.launch {
+                _events.emit(
+                    SocketEvent.CallAnswer(
+                        callId = p.optString("callId"),
+                        fromUserId = p.optString("fromUserId"),
+                        sdp = p.optString("sdp"),
+                    ),
+                )
+            }
+        }
+        s.on("call:ice") { args ->
+            val p = args.firstOrNull() as? JSONObject ?: return@on
+            scope.launch {
+                _events.emit(
+                    SocketEvent.CallIce(
+                        callId = p.optString("callId"),
+                        fromUserId = p.optString("fromUserId"),
+                        candidate = p.opt("candidate")?.toString().orEmpty(),
+                    ),
+                )
+            }
+        }
+
         s.connect()
     }
 
@@ -169,5 +264,54 @@ class ChatSocketController(
         socket?.off()
         socket?.disconnect()
         socket = null
+    }
+
+    fun emitCallInvite(callId: String, toUserId: String, roomId: String, mode: String = "audio") {
+        val s = socket ?: return
+        val body = JSONObject()
+            .put("callId", callId)
+            .put("toUserId", toUserId)
+            .put("roomId", roomId)
+            .put("mode", mode)
+        s.emit("call:invite", body)
+    }
+
+    fun emitCallAccept(callId: String) {
+        val s = socket ?: return
+        s.emit("call:accept", JSONObject().put("callId", callId))
+    }
+
+    fun emitCallReject(callId: String) {
+        val s = socket ?: return
+        s.emit("call:reject", JSONObject().put("callId", callId))
+    }
+
+    fun emitCallEnd(callId: String) {
+        val s = socket ?: return
+        s.emit("call:end", JSONObject().put("callId", callId))
+    }
+
+    fun emitCallOffer(callId: String, toUserId: String, sdp: String) {
+        val s = socket ?: return
+        s.emit(
+            "call:offer",
+            JSONObject().put("callId", callId).put("toUserId", toUserId).put("sdp", sdp),
+        )
+    }
+
+    fun emitCallAnswer(callId: String, toUserId: String, sdp: String) {
+        val s = socket ?: return
+        s.emit(
+            "call:answer",
+            JSONObject().put("callId", callId).put("toUserId", toUserId).put("sdp", sdp),
+        )
+    }
+
+    fun emitCallIce(callId: String, toUserId: String, candidate: String) {
+        val s = socket ?: return
+        s.emit(
+            "call:ice",
+            JSONObject().put("callId", callId).put("toUserId", toUserId).put("candidate", candidate),
+        )
     }
 }

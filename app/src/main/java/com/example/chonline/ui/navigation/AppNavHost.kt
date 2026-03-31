@@ -17,6 +17,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.chonline.call.CallCommand
+import com.example.chonline.call.CallCoordinator
 import com.example.chonline.di.AppContainer
 import com.example.chonline.ui.AppViewModelFactory
 import com.example.chonline.ui.auth.AuthViewModel
@@ -24,6 +26,9 @@ import com.example.chonline.ui.auth.LoginScreen
 import com.example.chonline.ui.auth.VerifyScreen
 import com.example.chonline.ui.admin.AdminClientsScreen
 import com.example.chonline.ui.chat.ChatScreen
+import com.example.chonline.ui.call.CallScreen
+import com.example.chonline.ui.call.CallViewModel
+import com.example.chonline.ui.call.CallViewModelFactory
 import com.example.chonline.ui.main.MainShellScreen
 import com.example.chonline.ui.rooms.GroupCreateScreen
 import com.example.chonline.ui.rooms.GroupEditScreen
@@ -53,6 +58,45 @@ fun AppNavHost(container: AppContainer) {
             }
         } else {
             container.chatRepository.disconnectSocket()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        container.chatRepository.socketEvents.collect { ev ->
+            if (ev is com.example.chonline.data.socket.SocketEvent.CallInvite) {
+                CallCoordinator.submit(
+                    CallCommand.IncomingInvite(
+                        com.example.chonline.call.CallInvite(
+                            callId = ev.callId,
+                            roomId = ev.roomId,
+                            fromUserId = ev.fromUserId,
+                            fromName = ev.fromName,
+                            mode = ev.mode,
+                            ts = ev.ts,
+                        ),
+                    ),
+                )
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        CallCoordinator.commands.collect { cmd ->
+            when (cmd) {
+                is CallCommand.IncomingInvite -> {
+                    val i = cmd.invite
+                    val route = "call/${url(i.callId)}/${url(i.roomId)}/${url(i.fromUserId)}/${url(i.fromName)}/1/0"
+                    nav.navigate(route) { launchSingleTop = true }
+                }
+                is CallCommand.Accept -> {
+                    val i = cmd.invite
+                    val route = "call/${url(i.callId)}/${url(i.roomId)}/${url(i.fromUserId)}/${url(i.fromName)}/1/1"
+                    nav.navigate(route) { launchSingleTop = true }
+                }
+                is CallCommand.Decline -> {
+                    container.chatRepository.rejectCall(cmd.invite.callId)
+                }
+            }
         }
     }
 
@@ -182,6 +226,10 @@ fun AppNavHost(container: AppContainer) {
                 roomId = roomId,
                 container = container,
                 onBack = { nav.popBackStack() },
+                onStartCall = { peerId, peerName ->
+                    val route = "call/${url("")}/${url(roomId)}/${url(peerId)}/${url(peerName)}/0/0"
+                    nav.navigate(route) { launchSingleTop = true }
+                },
                 onEditGroup = {
                     val e = URLEncoder.encode(roomId, StandardCharsets.UTF_8.name())
                     nav.navigate("group-edit/$e")
@@ -190,6 +238,41 @@ fun AppNavHost(container: AppContainer) {
                     val e = URLEncoder.encode(roomId, StandardCharsets.UTF_8.name())
                     nav.navigate("group-edit/$e")
                 },
+            )
+        }
+        composable(
+            route = "call/{callIdEnc}/{roomIdEnc}/{peerIdEnc}/{peerNameEnc}/{incoming}/{autoAccept}",
+            arguments = listOf(
+                navArgument("callIdEnc") { type = NavType.StringType },
+                navArgument("roomIdEnc") { type = NavType.StringType },
+                navArgument("peerIdEnc") { type = NavType.StringType },
+                navArgument("peerNameEnc") { type = NavType.StringType },
+                navArgument("incoming") { type = NavType.IntType },
+                navArgument("autoAccept") { type = NavType.IntType },
+            ),
+        ) { entry ->
+            val callId = URLDecoder.decode(entry.arguments?.getString("callIdEnc")!!, StandardCharsets.UTF_8.name())
+            val roomId = URLDecoder.decode(entry.arguments?.getString("roomIdEnc")!!, StandardCharsets.UTF_8.name())
+            val peerId = URLDecoder.decode(entry.arguments?.getString("peerIdEnc")!!, StandardCharsets.UTF_8.name())
+            val peerName = URLDecoder.decode(entry.arguments?.getString("peerNameEnc")!!, StandardCharsets.UTF_8.name())
+            val incoming = (entry.arguments?.getInt("incoming") ?: 0) == 1
+            val autoAccept = (entry.arguments?.getInt("autoAccept") ?: 0) == 1
+            val vm: CallViewModel = viewModel(
+                key = "call-${callId}-${peerId}-${incoming}",
+                factory = CallViewModelFactory(
+                    appContext = nav.context.applicationContext,
+                    repo = container.chatRepository,
+                    callId = callId,
+                    roomId = roomId,
+                    peerId = peerId,
+                    peerName = peerName,
+                    incoming = incoming,
+                    autoAccept = autoAccept,
+                ),
+            )
+            CallScreen(
+                viewModel = vm,
+                onClose = { nav.popBackStack() },
             )
         }
         composable("group-create") {
@@ -223,3 +306,5 @@ fun AppNavHost(container: AppContainer) {
         }
     }
 }
+
+private fun url(v: String): String = URLEncoder.encode(v, StandardCharsets.UTF_8.name())

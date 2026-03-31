@@ -82,6 +82,7 @@ dependencies {
     implementation(libs.socket.io.client)
     implementation(libs.coil.compose)
     implementation(libs.rustore.pushclient)
+    implementation(libs.google.webrtc)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

@@ -1,6 +1,10 @@
 package com.example.chonline.push
 
 import android.util.Log
+import com.example.chonline.call.CallCommand
+import com.example.chonline.call.CallCoordinator
+import com.example.chonline.call.CallInvite
+import com.example.chonline.call.IncomingCallNotifier
 import com.example.chonline.di.AppContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +26,23 @@ class RuStorePushListenerService : RuStoreMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
+        val data = message.data
+        val type = data["type"].orEmpty()
+        if (type == "call_invite") {
+            val invite = CallInvite(
+                callId = data["callId"].orEmpty(),
+                roomId = data["roomId"].orEmpty(),
+                fromUserId = data["fromUserId"].orEmpty(),
+                fromName = data["callerName"].orEmpty(),
+                mode = data["mode"].orEmpty().ifBlank { "audio" },
+                ts = data["ts"].orEmpty(),
+            )
+            if (invite.callId.isNotBlank()) {
+                CallCoordinator.submit(CallCommand.IncomingInvite(invite))
+                IncomingCallNotifier.show(applicationContext, invite)
+            }
+            return
+        }
         Log.i(TAG, "RuStore push message received: id=${message.messageId}")
     }
 

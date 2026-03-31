@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import com.example.chonline.di.AppContainer
+import com.example.chonline.call.CallCommand
+import com.example.chonline.call.CallCoordinator
+import com.example.chonline.call.CallNotificationParser
 import com.example.chonline.ui.navigation.AppNavHost
 import com.example.chonline.ui.theme.CHOnlineTheme
 import com.example.chonline.ui.theme.CorpChatColors
@@ -33,6 +36,7 @@ class MainActivity : ComponentActivity() {
                 projectId = BuildConfig.RUSTORE_PUSH_PROJECT_ID,
             )
         }
+        handleCallIntent(intent)
         askNotificationPermissionIfNeeded()
         enableEdgeToEdge()
         setContent {
@@ -47,6 +51,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        handleCallIntent(intent)
+    }
+
     private fun askNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         if (
@@ -56,5 +65,18 @@ class MainActivity : ComponentActivity() {
             ) == PackageManager.PERMISSION_GRANTED
         ) return
         requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun handleCallIntent(intent: android.content.Intent?) {
+        if (intent == null) return
+        val invite = CallNotificationParser.readInvite(intent) ?: return
+        when (intent.getStringExtra(CallNotificationParser.EXTRA_ACTION).orEmpty()) {
+            CallNotificationParser.ACTION_ACCEPT ->
+                CallCoordinator.submit(CallCommand.Accept(invite))
+            CallNotificationParser.ACTION_DECLINE ->
+                CallCoordinator.submit(CallCommand.Decline(invite))
+            else ->
+                CallCoordinator.submit(CallCommand.IncomingInvite(invite))
+        }
     }
 }

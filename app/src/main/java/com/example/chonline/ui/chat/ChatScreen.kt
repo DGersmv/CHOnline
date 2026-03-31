@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -75,6 +76,7 @@ fun ChatScreen(
     /** Создатель: «Изменить»; участник: «Группа» (выйти). */
     onEditGroup: (() -> Unit)? = null,
     onOpenGroupAsMember: (() -> Unit)? = null,
+    onStartCall: ((peerId: String, peerName: String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val vm: ChatViewModel = viewModel(
@@ -156,6 +158,17 @@ fun ChatScreen(
                     TextButton(onClick = onBack) { Text("Назад") }
                 },
                 actions = {
+                    val canCall = !isClient && room?.type == "dm" && !room?.dmPeerUserId.isNullOrBlank()
+                    if (canCall) {
+                        IconButton(
+                            onClick = {
+                                val peer = room?.dmPeerUserId ?: return@IconButton
+                                onStartCall?.invoke(peer, barTitle)
+                            },
+                        ) {
+                            Icon(Icons.Filled.Call, contentDescription = "Позвонить")
+                        }
+                    }
                     if (showGroupEdit) {
                         TextButton(onClick = { onEditGroup?.invoke() }) {
                             Text("Изменить")
