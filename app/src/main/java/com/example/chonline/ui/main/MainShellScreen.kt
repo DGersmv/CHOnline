@@ -445,11 +445,17 @@ private fun chatListAvatarUrl(
 
 @Composable
 private fun CallsTabBody() {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = 24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
         Text(
-            "Звонки\nскоро",
+            "Аудиозвонки 1:1 между сотрудниками доступны в веб-версии мессенджера.\n\n" +
+                "В приложении звонки появятся в следующих версиях.",
             textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             lineHeight = 24.sp,
         )
