@@ -122,6 +122,21 @@ data class MessagesResponse(
 )
 
 @Serializable
+data class CallInfoDto(
+    val v: Int = 1,
+    val callId: String = "",
+    val callerId: String = "",
+    val calleeId: String = "",
+    val initiatorId: String = "",
+    val status: String = "",
+    val durationSec: Int? = null,
+    val startedAt: String? = null,
+    val endedAt: String? = null,
+    val callerName: String? = null,
+    val calleeName: String? = null,
+)
+
+@Serializable
 data class MessageDto(
     val id: String,
     val from: String = "",
@@ -133,6 +148,7 @@ data class MessageDto(
     @SerialName("msgType") val msgType: String = "text",
     @SerialName("fromClientId") val fromClientId: String? = null,
     val file: FileAttachmentDto? = null,
+    @SerialName("callInfo") val callInfo: CallInfoDto? = null,
 )
 
 @Serializable
@@ -230,6 +246,20 @@ data class RoomMutationResponse(
 
 @Serializable
 data class ErrorBody(val error: String? = null, val ok: Boolean? = null)
+
+@Serializable
+data class VoiceCallEntryDto(
+    val id: String,
+    val peerId: String,
+    val peerName: String = "",
+    val startedAt: String,
+    val endedAt: String? = null,
+    val status: String = "",
+    val durationSec: Int? = null,
+)
+
+@Serializable
+data class CallsHistoryResponse(val calls: List<VoiceCallEntryDto> = emptyList())
 
 // --- Админка заказчиков (тот же API, что веб) ---
 

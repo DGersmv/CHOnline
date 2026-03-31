@@ -35,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +58,7 @@ import coil.request.ImageRequest
 import com.example.chonline.BuildConfig
 import com.example.chonline.data.remote.EmployeeDto
 import com.example.chonline.data.remote.RoomDto
+import com.example.chonline.data.remote.VoiceCallEntryDto
 import com.example.chonline.di.AppContainer
 import com.example.chonline.ui.contacts.EmployeesListContent
 import com.example.chonline.ui.profile.ProfileScreen
@@ -64,6 +66,9 @@ import com.example.chonline.ui.profile.ProfileViewModel
 import com.example.chonline.ui.rooms.RoomsViewModel
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 private enum class MainTab {
     Contacts,
@@ -97,10 +102,11 @@ fun MainShellScreen(
     val onlineIds = remember(online) { online.map { it.id }.toSet() }
 
     var tab by remember { mutableStateOf(MainTab.Chats) }
-    var searchQuery by remember { mutableStateOf("") }
+    var chatsSearchQuery by remember { mutableStateOf("") }
+    var contactsSearchQuery by remember { mutableStateOf("") }
 
-    val filteredRooms = remember(rooms, searchQuery) {
-        val q = searchQuery.trim().lowercase()
+    val filteredRooms = remember(rooms, chatsSearchQuery) {
+        val q = chatsSearchQuery.trim().lowercase()
         if (q.isEmpty()) rooms
         else {
             rooms.filter { r ->
@@ -116,8 +122,11 @@ fun MainShellScreen(
 
         Column(Modifier.fillMaxSize()) {
             TopSearchStatusBar(
-                searchQuery = searchQuery,
-                onSearchChange = { searchQuery = it },
+                tab = tab,
+                chatsSearchQuery = chatsSearchQuery,
+                contactsSearchQuery = contactsSearchQuery,
+                onChatsSearchChange = { chatsSearchQuery = it },
+                onContactsSearchChange = { contactsSearchQuery = it },
                 socketConnected = socketConnected,
                 onlineCount = online.size,
                 modifier = Modifier
@@ -164,11 +173,12 @@ fun MainShellScreen(
                         loading = loading,
                         networkError = error,
                         container = container,
+                        searchQuery = contactsSearchQuery,
                         onOpenDm = onOpenChat,
                         modifier = Modifier.fillMaxSize(),
                     )
 
-                    MainTab.Calls -> CallsTabBody()
+                    MainTab.Calls -> CallsTabBody(container = container)
 
                     MainTab.Settings -> ProfileScreen(
                         viewModel = profileViewModel,
@@ -196,8 +206,11 @@ fun MainShellScreen(
 
 @Composable
 private fun TopSearchStatusBar(
-    searchQuery: String,
-    onSearchChange: (String) -> Unit,
+    tab: MainTab,
+    chatsSearchQuery: String,
+    contactsSearchQuery: String,
+    onChatsSearchChange: (String) -> Unit,
+    onContactsSearchChange: (String) -> Unit,
     socketConnected: Boolean,
     onlineCount: Int,
     modifier: Modifier = Modifier,
@@ -207,14 +220,31 @@ private fun TopSearchStatusBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = onSearchChange,
-            modifier = Modifier.weight(1f),
-            singleLine = true,
-            placeholder = { Text("Поиск чатов", style = MaterialTheme.typography.bodySmall) },
-            textStyle = MaterialTheme.typography.bodyMedium,
-        )
+        when (tab) {
+            MainTab.Chats -> {
+                OutlinedTextField(
+                    value = chatsSearchQuery,
+                    onValueChange = onChatsSearchChange,
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    placeholder = { Text("Поиск чатов", style = MaterialTheme.typography.bodySmall) },
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            MainTab.Contacts -> {
+                OutlinedTextField(
+                    value = contactsSearchQuery,
+                    onValueChange = onContactsSearchChange,
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    placeholder = { Text("Имя, телефон или почта", style = MaterialTheme.typography.bodySmall) },
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            MainTab.Calls, MainTab.Settings -> {
+                Spacer(Modifier.weight(1f))
+            }
+        }
         Column(
             horizontalAlignment = Alignment.End,
             modifier = Modifier.widthIn(min = 72.dp),
@@ -444,22 +474,140 @@ private fun chatListAvatarUrl(
 }
 
 @Composable
-private fun CallsTabBody() {
+private fun CallsTabBody(container: AppContainer) {
+    val isClient = container.tokenStore.isClient()
+    var loading by remember { mutableStateOf(!isClient) }
+    var calls by remember { mutableStateOf<List<VoiceCallEntryDto>>(emptyList()) }
+    var err by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        if (isClient) {
+            loading = false
+            return@LaunchedEffect
+        }
+        container.chatRepository.loadCallsHistory()
+            .onSuccess {
+                calls = it
+                loading = false
+            }
+            .onFailure { e ->
+                err = e.message
+                loading = false
+            }
+    }
+
     Box(
         Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp),
-        contentAlignment = Alignment.Center,
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        when {
+            isClient -> {
+                Text(
+                    "История звонков доступна сотрудникам. Аудиозвонки 1:1 — в веб-версии.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.Center),
+                    textAlign = TextAlign.Center,
+                    lineHeight = 22.sp,
+                )
+            }
+            loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+            err != null -> {
+                Text(
+                    err ?: "",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(16.dp),
+                )
+            }
+            calls.isEmpty() -> {
+                Text(
+                    "Пока нет совершённых звонков",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.Center),
+                    textAlign = TextAlign.Center,
+                )
+            }
+            else -> {
+                Column(Modifier.fillMaxSize()) {
+                    Text(
+                        "Недавние",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        items(calls, key = { it.id }) { c ->
+                            CallHistoryRow(c)
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Позвонить можно из веб-версии. Аудио WebRTC в приложении — в следующих версиях.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 20.sp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CallHistoryRow(c: VoiceCallEntryDto) {
+    val meta = buildString {
+        append(formatCallListTime(c.startedAt))
+        append(" · ")
+        append(callStatusRu(c.status))
+        c.durationSec?.takeIf { it > 0 }?.let { s ->
+            val mm = s / 60
+            val ss = s % 60
+            append(" · ${mm}:${ss.toString().padStart(2, '0')}")
+        }
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
     ) {
         Text(
-            "Аудиозвонки 1:1 между сотрудниками доступны в веб-версии мессенджера.\n\n" +
-                "В приложении звонки появятся в следующих версиях.",
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.bodyLarge,
+            c.peerName.ifBlank { "Собеседник" },
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            meta,
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            lineHeight = 24.sp,
         )
     }
+}
+
+private fun callStatusRu(s: String): String = when (s) {
+    "ended" -> "Состоялся"
+    "declined" -> "Отклонён"
+    "missed" -> "Пропущен"
+    "cancelled" -> "Отменён"
+    "failed" -> "Сбой"
+    else -> s.ifBlank { "—" }
+}
+
+private fun formatCallListTime(iso: String): String {
+    return runCatching {
+        val i = Instant.parse(iso)
+        val z = i.atZone(ZoneId.systemDefault())
+        val fmt = DateTimeFormatter.ofPattern("d MMM, HH:mm", java.util.Locale("ru"))
+        z.format(fmt)
+    }.getOrDefault(iso.take(16))
 }
 
 @Composable

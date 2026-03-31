@@ -18,6 +18,7 @@ import com.example.chonline.data.remote.PatchRoomRequest
 import com.example.chonline.data.remote.RoomDto
 import com.example.chonline.data.remote.SendMessageResponse
 import com.example.chonline.data.remote.SendTextRequest
+import com.example.chonline.data.remote.VoiceCallEntryDto
 import com.example.chonline.data.socket.ChatSocketController
 import com.example.chonline.data.socket.SocketEvent
 import kotlinx.coroutines.Dispatchers
@@ -57,6 +58,11 @@ class ChatRepository(
 
     suspend fun loadRooms(): Result<List<RoomDto>> = runCatching {
         if (isClient()) api.clientRooms().rooms else api.rooms().rooms
+    }.mapError()
+
+    suspend fun loadCallsHistory(): Result<List<VoiceCallEntryDto>> = runCatching {
+        if (isClient()) emptyList()
+        else api.calls().calls
     }.mapError()
 
     suspend fun loadEmployees(): Result<List<EmployeeDto>> = runCatching {

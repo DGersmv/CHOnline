@@ -51,6 +51,8 @@ fun EmployeesListContent(
     /** Ошибка сети при load() в ViewModel (опционально). */
     networkError: String?,
     container: AppContainer,
+    /** Фильтр по имени, почте и телефону (как на вебе). */
+    searchQuery: String = "",
     onOpenDm: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -66,14 +68,40 @@ fun EmployeesListContent(
         if (em.isClient && em.canOpenDm == false) return@filter false
         true
     }
+    val listFiltered = remember(list, searchQuery) {
+        val q = searchQuery.trim()
+        if (q.isEmpty()) {
+            list
+        } else {
+            list.filter { contactMatchesSearch(it, q) }
+        }
+    }
     val showInitialSpinner = loading && employees.isEmpty()
 
     Box(modifier.fillMaxSize()) {
         when {
             showInitialSpinner -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+            list.isEmpty() -> {
+                Text(
+                    "Нет контактов",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(24.dp),
+                )
+            }
+            listFiltered.isEmpty() -> {
+                Text(
+                    "Ничего не найдено",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(24.dp),
+                )
+            }
             else -> LazyColumn(Modifier.fillMaxSize()) {
                 items(
-                    list,
+                    listFiltered,
                     key = { it.id },
                 ) { em ->
                     val title = displayName(em)
@@ -172,6 +200,26 @@ private fun displayPhone(em: EmployeeDto): String {
     val ap = em.adminPhone.trim()
     if (ap.isNotBlank()) return ap
     return ""
+}
+
+private fun digitsOnly(s: String): String = s.filter { it.isDigit() }
+
+/** Поиск по имени, e-mail и телефону (в т.ч. по цифрам без форматирования). */
+private fun contactMatchesSearch(em: EmployeeDto, qRaw: String): Boolean {
+    val q = qRaw.trim().lowercase()
+    if (q.isEmpty()) return true
+    val name = displayName(em).lowercase()
+    if (name.contains(q)) return true
+    val email = (em.email ?: em.accountEmail).orEmpty().lowercase()
+    if (email.contains(q)) return true
+    val phone = displayPhone(em)
+    if (phone.isNotBlank() && phone.lowercase().contains(q)) return true
+    val qDigits = digitsOnly(q)
+    if (qDigits.length >= 2) {
+        val pDigits = digitsOnly(phone)
+        if (pDigits.isNotEmpty() && pDigits.contains(qDigits)) return true
+    }
+    return false
 }
 
 @Composable

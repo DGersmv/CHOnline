@@ -180,8 +180,8 @@ class ChatViewModel(
         }
     }
 
-    fun editMessage(messageId: String, text: String) {
-        if (text.isBlank()) return
+    fun editMessage(messageId: String, text: String, allowBlank: Boolean = false) {
+        if (!allowBlank && text.isBlank()) return
         viewModelScope.launch {
             _sending.value = true
             _error.value = null

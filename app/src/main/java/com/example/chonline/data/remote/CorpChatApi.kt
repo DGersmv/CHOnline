@@ -42,6 +42,10 @@ interface CorpChatApi {
     @GET("employees")
     suspend fun employees(): EmployeesResponse
 
+    /** История звонков 1:1 (только сотрудники). */
+    @GET("calls")
+    suspend fun calls(): CallsHistoryResponse
+
     @GET("rooms")
     suspend fun rooms(): RoomsResponse
 

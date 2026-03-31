@@ -60,6 +60,7 @@ import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.chonline.BuildConfig
+import com.example.chonline.data.remote.CallInfoDto
 import com.example.chonline.data.remote.FileAttachmentDto
 import com.example.chonline.data.remote.MessageDto
 import com.example.chonline.di.AppContainer
@@ -199,11 +200,12 @@ fun ChatScreen(
                     MessageBubble(
                         msg = msg,
                         isMine = vm.isMyMessage(msg),
+                        myUserId = vm.myUserId,
                         isClient = isClient,
                         baseUrl = BuildConfig.API_BASE_URL.trimEnd('/'),
                         imageLoader = imageLoader,
                         onEdit = {
-                            if (msg.msgType == "text") {
+                            if (msg.msgType == "text" || msg.msgType == "file") {
                                 editTarget = msg
                                 editText = msg.text
                             }
@@ -271,7 +273,11 @@ fun ChatScreen(
     editTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { editTarget = null },
-            title = { Text("Изменить сообщение") },
+            title = {
+                Text(
+                    if (target.msgType == "file") "Подпись к файлу" else "Изменить сообщение",
+                )
+            },
             text = {
                 OutlinedTextField(
                     value = editText,
@@ -283,7 +289,7 @@ fun ChatScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        vm.editMessage(target.id, editText)
+                        vm.editMessage(target.id, editText, allowBlank = target.msgType == "file")
                         editTarget = null
                     },
                 ) { Text("Сохранить") }
@@ -382,6 +388,27 @@ fun ChatScreen(
     }
 }
 
+private fun formatCallLine(info: CallInfoDto?, viewerId: String?): String {
+    if (info == null || viewerId.isNullOrBlank()) return "Звонок"
+    if (info.callerId.isBlank() || info.calleeId.isBlank()) return "Звонок"
+    val incoming = info.calleeId == viewerId
+    val dir = if (incoming) "Входящий" else "Исходящий"
+    val st = when (info.status) {
+        "ended" -> "Состоялся"
+        "declined" -> "Отклонён"
+        "missed" -> "Пропущен"
+        "cancelled" -> "Отменён"
+        "failed" -> "Сбой"
+        else -> info.status.ifBlank { "—" }
+    }
+    val d = info.durationSec?.takeIf { it > 0 }?.let { s ->
+        val mm = s / 60
+        val ss = s % 60
+        " · $mm:${ss.toString().padStart(2, '0')}"
+    }.orEmpty()
+    return "$dir звонок · $st$d"
+}
+
 private fun roomTitle(roomId: String): String = when {
     roomId == "general" -> "Общий чат"
     roomId.startsWith("dm:") -> "Диалог"
@@ -402,6 +429,7 @@ private fun rememberCoilWithAuth(container: AppContainer): ImageLoader {
 private fun MessageBubble(
     msg: MessageDto,
     isMine: Boolean,
+    myUserId: String?,
     isClient: Boolean,
     baseUrl: String,
     imageLoader: ImageLoader,
@@ -410,7 +438,7 @@ private fun MessageBubble(
 ) {
     val bubbleColor = if (isMine) CorpChatColors.bgBubbleOut else CorpChatColors.bgBubbleIn
     val shape = RoundedCornerShape(12.dp)
-    val showMsgMenu = isMine && (msg.msgType == "text" || msg.msgType == "file")
+    val showMsgMenu = isMine && msg.msgType != "call" && (msg.msgType == "text" || msg.msgType == "file")
     var menuExpanded by remember(msg.id) { mutableStateOf(false) }
     val contentEndPadding = if (showMsgMenu) 40.dp else 12.dp
     Column(
@@ -437,6 +465,14 @@ private fun MessageBubble(
                 horizontalAlignment = if (isMine) Alignment.End else Alignment.Start,
             ) {
                 when {
+                    msg.msgType == "call" -> {
+                        Text(
+                            formatCallLine(msg.callInfo, myUserId),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = CorpChatColors.textPrimary,
+                        )
+                    }
+
                     msg.msgType == "file" && msg.file?.mime?.startsWith("image/") == true -> {
                         val path = imagePathFor(msg.file, isClient)
                         val full = baseUrl + path
@@ -503,7 +539,7 @@ private fun MessageBubble(
                     expanded = menuExpanded,
                     onDismissRequest = { menuExpanded = false },
                 ) {
-                    if (msg.msgType == "text") {
+                    if (msg.msgType == "text" || msg.msgType == "file") {
                         DropdownMenuItem(
                             text = { Text("Изменить") },
                             onClick = {
