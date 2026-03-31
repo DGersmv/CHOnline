@@ -18,6 +18,13 @@ data class VerifyRequest(
 )
 
 @Serializable
+data class PushTokenSaveRequest(
+    val token: String,
+    val deviceId: String,
+    val platform: String,
+)
+
+@Serializable
 data class VerifyResponse(
     val ok: Boolean? = null,
     val error: String? = null,

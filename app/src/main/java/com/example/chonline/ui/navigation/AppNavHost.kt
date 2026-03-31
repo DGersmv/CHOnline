@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import ru.rustore.sdk.pushclient.RuStorePushClient
 
 @Composable
 fun AppNavHost(container: AppContainer) {
@@ -44,6 +45,12 @@ fun AppNavHost(container: AppContainer) {
     LaunchedEffect(session) {
         if (session != null) {
             container.chatRepository.connectSocket()
+            kotlin.runCatching {
+                RuStorePushClient.getToken()
+                    .addOnSuccessListener { token ->
+                        scope.launch { container.authRepository.registerPushToken(token) }
+                    }
+            }
         } else {
             container.chatRepository.disconnectSocket()
         }

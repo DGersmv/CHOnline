@@ -33,6 +33,9 @@ interface CorpChatApi {
     @POST("auth/logout")
     suspend fun logout(@Body body: LogoutRequest): OkResponse
 
+    @POST("devices/push-token")
+    suspend fun savePushToken(@Body body: PushTokenSaveRequest): OkResponse
+
     @GET("me")
     suspend fun me(): MeResponse
 

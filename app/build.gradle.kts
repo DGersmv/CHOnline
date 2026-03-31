@@ -17,6 +17,8 @@ val apiBaseUrl: String =
 // Email администратора (доступ к /admin/*), как VITE_ADMIN_EMAIL на вебе.
 val adminEmail: String =
     (localProperties.getProperty("admin.email") ?: "admin@227.info").trim()
+val rustorePushProjectId: String =
+    (localProperties.getProperty("rustore.push.project.id") ?: "").trim()
 
 android {
     namespace = "com.example.chonline"
@@ -32,6 +34,7 @@ android {
         // Переопределение: local.properties → api.base.url=... (без /api/v1). Локально: http://10.0.2.2:8788
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
         buildConfigField("String", "ADMIN_EMAIL", "\"${adminEmail.replace("\"", "\\\"")}\"")
+        buildConfigField("String", "RUSTORE_PUSH_PROJECT_ID", "\"${rustorePushProjectId.replace("\"", "\\\"")}\"")
     }
 
     buildTypes {
@@ -78,6 +81,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.socket.io.client)
     implementation(libs.coil.compose)
+    implementation(libs.rustore.pushclient)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

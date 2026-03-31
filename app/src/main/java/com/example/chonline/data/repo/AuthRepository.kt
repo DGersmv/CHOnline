@@ -8,6 +8,7 @@ import com.example.chonline.data.remote.CorpChatApi
 import com.example.chonline.data.remote.LogoutRequest
 import com.example.chonline.data.remote.MeResponse
 import com.example.chonline.data.remote.ProfileUpdateRequest
+import com.example.chonline.data.remote.PushTokenSaveRequest
 import com.example.chonline.data.remote.SendCodeRequest
 import com.example.chonline.data.remote.VerifyRequest
 import retrofit2.HttpException
@@ -122,6 +123,19 @@ class AuthRepository(
         }
         tokenStore.clear()
     }
+
+    suspend fun registerPushToken(token: String): Result<Unit> = runCatching {
+        val pushToken = token.trim()
+        if (pushToken.isBlank()) return@runCatching
+        val r = api.savePushToken(
+            PushTokenSaveRequest(
+                token = pushToken,
+                deviceId = tokenStore.deviceId(),
+                platform = "android",
+            ),
+        )
+        if (r.ok != true) error(r.error ?: "Не удалось сохранить push-токен")
+    }.mapError()
 
     private fun <T> Result<T>.mapError(): Result<T> = fold(
         onSuccess = { Result.success(it) },
