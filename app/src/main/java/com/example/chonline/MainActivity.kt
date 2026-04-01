@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
@@ -15,11 +16,13 @@ import androidx.compose.ui.Modifier
 import com.example.chonline.di.AppContainer
 import com.example.chonline.call.CallCommand
 import com.example.chonline.call.CallCoordinator
+import com.example.chonline.call.IncomingCallNotifier
 import com.example.chonline.call.CallNotificationParser
+import com.example.chonline.ui.navigation.NotificationNavigationCoordinator
+import com.example.chonline.ui.navigation.OpenChatCommand
 import com.example.chonline.ui.navigation.AppNavHost
 import com.example.chonline.ui.theme.CHOnlineTheme
 import com.example.chonline.ui.theme.CorpChatColors
-import ru.rustore.sdk.pushclient.RuStorePushClient
 
 class MainActivity : ComponentActivity() {
 
@@ -30,13 +33,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         appContainer = AppContainer(applicationContext)
-        if (BuildConfig.RUSTORE_PUSH_PROJECT_ID.isNotBlank()) {
-            RuStorePushClient.init(
-                application = application,
-                projectId = BuildConfig.RUSTORE_PUSH_PROJECT_ID,
-            )
-        }
-        handleCallIntent(intent)
+        handleLaunchIntent(intent)
         askNotificationPermissionIfNeeded()
         enableEdgeToEdge()
         setContent {
@@ -53,7 +50,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
-        handleCallIntent(intent)
+        handleLaunchIntent(intent)
     }
 
     private fun askNotificationPermissionIfNeeded() {
@@ -67,9 +64,31 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    private fun handleCallIntent(intent: android.content.Intent?) {
+    private fun handleLaunchIntent(intent: android.content.Intent?) {
         if (intent == null) return
+        Log.d(
+            "CallFlow",
+            "handleLaunchIntent action=${intent.action} hasCallId=${intent.hasExtra(CallNotificationParser.EXTRA_CALL_ID)}",
+        )
+        if (intent.action == com.example.chonline.push.PushMessageNotifier.ACTION_OPEN_MESSAGE) {
+            val roomId = intent.getStringExtra(com.example.chonline.push.PushMessageNotifier.EXTRA_ROOM_ID).orEmpty()
+            if (roomId.isNotBlank()) {
+                val messageId =
+                    intent.getStringExtra(com.example.chonline.push.PushMessageNotifier.EXTRA_MESSAGE_ID)
+                        .orEmpty()
+                        .ifBlank { null }
+                NotificationNavigationCoordinator.submitOpenChat(
+                    OpenChatCommand(roomId = roomId, messageId = messageId),
+                )
+            }
+            return
+        }
         val invite = CallNotificationParser.readInvite(intent) ?: return
+        Log.d(
+            "CallFlow",
+            "launchInvite action=${intent.getStringExtra(CallNotificationParser.EXTRA_ACTION)} callId=${invite.callId} roomId=${invite.roomId}",
+        )
+        IncomingCallNotifier.cancel(this, invite.callId)
         when (intent.getStringExtra(CallNotificationParser.EXTRA_ACTION).orEmpty()) {
             CallNotificationParser.ACTION_ACCEPT ->
                 CallCoordinator.submit(CallCommand.Accept(invite))

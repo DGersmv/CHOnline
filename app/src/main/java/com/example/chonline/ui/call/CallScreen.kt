@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import java.util.Locale
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.chonline.call.CallAudioRoute
 
 @Composable
 fun CallScreen(
@@ -104,6 +105,26 @@ fun CallScreen(
                 modifier = Modifier.padding(bottom = 12.dp),
             )
         }
+        if (ui.availableRoutes.isNotEmpty() && ui.status == "connected") {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                for (route in ui.availableRoutes) {
+                    val label = routeRu(route)
+                    val selected = ui.selectedRoute == route
+                    Button(
+                        onClick = { viewModel.selectAudioRoute(route) },
+                        modifier = Modifier.weight(1f),
+                        enabled = !selected,
+                    ) {
+                        Text(if (selected) "✓ $label" else label)
+                    }
+                }
+            }
+        }
         if (ui.incoming && ui.status == "incoming") {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = { viewModel.decline() }, modifier = Modifier.weight(1f)) {
@@ -146,7 +167,14 @@ private fun statusRu(s: String): String = when (s) {
     "declined" -> "Отклонено"
     "rejected" -> "Отклонено собеседником"
     "missed" -> "Пропущенный"
+    "cancelled" -> "Отменён"
     "ended" -> "Завершено"
     else -> s
+}
+
+private fun routeRu(route: CallAudioRoute): String = when (route) {
+    CallAudioRoute.EARPIECE -> "Телефон"
+    CallAudioRoute.SPEAKER -> "Динамик"
+    CallAudioRoute.BLUETOOTH -> "Bluetooth"
 }
 

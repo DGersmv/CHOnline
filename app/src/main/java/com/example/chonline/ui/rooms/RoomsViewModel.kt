@@ -39,6 +39,9 @@ class RoomsViewModel(
     private var debouncedReload: Job? = null
 
     init {
+        // При старте из push/экрана звонка событие Connected могло пройти до подписки VM.
+        // Синхронизируем индикатор с фактическим состоянием сокета, чтобы не залипать в "Нет связи".
+        _socketConnected.value = chat.isSocketConnected()
         viewModelScope.launch {
             chat.socketEvents.collect { ev ->
                 when (ev) {
@@ -87,6 +90,7 @@ class RoomsViewModel(
 
     fun load() {
         viewModelScope.launch {
+            _socketConnected.value = chat.isSocketConnected()
             _loading.value = true
             _error.value = null
             chat.loadRooms()

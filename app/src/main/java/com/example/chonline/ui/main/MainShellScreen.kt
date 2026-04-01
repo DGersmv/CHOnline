@@ -39,6 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,6 +61,7 @@ import com.example.chonline.data.remote.EmployeeDto
 import com.example.chonline.data.remote.RoomDto
 import com.example.chonline.data.remote.VoiceCallEntryDto
 import com.example.chonline.di.AppContainer
+import com.example.chonline.data.socket.SocketEvent
 import com.example.chonline.ui.contacts.EmployeesListContent
 import com.example.chonline.ui.profile.ProfileScreen
 import com.example.chonline.ui.profile.ProfileViewModel
@@ -69,6 +71,7 @@ import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.launch
 
 private enum class MainTab {
     Contacts,
@@ -479,21 +482,45 @@ private fun CallsTabBody(container: AppContainer) {
     var loading by remember { mutableStateOf(!isClient) }
     var calls by remember { mutableStateOf<List<VoiceCallEntryDto>>(emptyList()) }
     var err by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun refreshCallsHistory() {
+        if (isClient) return
+        loading = true
+        scope.launch {
+            container.chatRepository.loadCallsHistory()
+                .onSuccess {
+                    calls = it
+                    err = null
+                    loading = false
+                }
+                .onFailure { e ->
+                    err = e.message
+                    loading = false
+                }
+        }
+    }
 
     LaunchedEffect(Unit) {
         if (isClient) {
             loading = false
             return@LaunchedEffect
         }
-        container.chatRepository.loadCallsHistory()
-            .onSuccess {
-                calls = it
-                loading = false
+        refreshCallsHistory()
+    }
+
+    LaunchedEffect(isClient) {
+        if (isClient) return@LaunchedEffect
+        container.chatRepository.socketEvents.collect { ev ->
+            if (
+                ev is SocketEvent.CallEnd ||
+                ev is SocketEvent.CallMissed ||
+                ev is SocketEvent.CallReject ||
+                ev is SocketEvent.CallAccept
+            ) {
+                refreshCallsHistory()
             }
-            .onFailure { e ->
-                err = e.message
-                loading = false
-            }
+        }
     }
 
     Box(

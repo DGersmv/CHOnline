@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import android.util.Log
 import org.json.JSONObject
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
@@ -118,10 +119,12 @@ class ChatSocketController(
         socket = s
 
         s.on(Socket.EVENT_CONNECT) {
+            Log.d("CallFlow", "socket connected")
             scope.launch { _events.emit(SocketEvent.Connected) }
             emitRoomsSync()
         }
         s.on(Socket.EVENT_DISCONNECT) {
+            Log.d("CallFlow", "socket disconnected")
             scope.launch { _events.emit(SocketEvent.Disconnected) }
         }
         s.on(Socket.EVENT_CONNECT_ERROR) { }
@@ -224,6 +227,7 @@ class ChatSocketController(
         }
         s.on("call:accept") { args ->
             val p = args.firstOrNull() as? JSONObject ?: return@on
+            Log.d("CallFlow", "socket call:accept callId=${p.optString("callId")}")
             scope.launch { _events.emit(SocketEvent.CallAccept(p.optString("callId"), p.optString("fromUserId"))) }
         }
         s.on("call:reject") { args ->
@@ -236,6 +240,7 @@ class ChatSocketController(
         }
         s.on("call:end") { args ->
             val p = args.firstOrNull() as? JSONObject ?: return@on
+            Log.d("CallFlow", "socket call:end callId=${p.optString("callId")} status=${p.optString("status")}")
             clearCallBuffers(p.optString("callId"))
             scope.launch {
                 _events.emit(
@@ -248,6 +253,7 @@ class ChatSocketController(
         }
         s.on("call:offer") { args ->
             val p = args.firstOrNull() as? JSONObject ?: return@on
+            Log.d("CallFlow", "socket call:offer callId=${p.optString("callId")} sdpLen=${p.optString("sdp").length}")
             val event = SocketEvent.CallOffer(
                 callId = p.optString("callId"),
                 fromUserId = p.optString("fromUserId"),
@@ -291,6 +297,24 @@ class ChatSocketController(
         s.connect()
     }
 
+    fun isConnected(): Boolean = socket?.connected() == true
+
+    /**
+     * Подключиться без полного сброса клиента, если экземпляр уже есть.
+     * [connect] всегда вызывает [disconnect] — при ретраях это рвёт активный звонок и даёт «Нет связи» в UI.
+     */
+    fun ensureConnected() {
+        val s = socket
+        when {
+            s?.connected() == true -> return
+            s == null -> connect()
+            else -> {
+                Log.d("CallFlow", "ensureConnected: reconnect existing socket (no teardown)")
+                s.connect()
+            }
+        }
+    }
+
     fun emitRoomsSync() {
         val s = socket ?: return
         val map = lastSeenStore.snapshot()
@@ -316,9 +340,19 @@ class ChatSocketController(
         s.emit("call:invite", body)
     }
 
-    fun emitCallAccept(callId: String) {
-        val s = socket ?: return
-        s.emit("call:accept", JSONObject().put("callId", callId))
+    fun emitCallAccept(callId: String, toUserId: String? = null) {
+        val s = socket
+        if (s == null) {
+            Log.e("CallFlow", "emitCallAccept skipped: socket is null callId=$callId")
+            return
+        }
+        Log.d(
+            "CallFlow",
+            "emitCallAccept callId=$callId toUserId=${toUserId.orEmpty()} socketConnected=${s.connected()}",
+        )
+        val body = JSONObject().put("callId", callId)
+        if (!toUserId.isNullOrBlank()) body.put("toUserId", toUserId)
+        s.emit("call:accept", body)
     }
 
     fun emitCallReject(callId: String) {

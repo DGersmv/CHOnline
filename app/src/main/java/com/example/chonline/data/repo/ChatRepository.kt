@@ -23,6 +23,7 @@ import com.example.chonline.data.socket.BufferedCallSignaling
 import com.example.chonline.data.socket.ChatSocketController
 import com.example.chonline.data.socket.SocketEvent
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -52,7 +53,9 @@ class ChatRepository(
 
     private fun isClient(): Boolean = tokenStore.isClient()
 
-    fun connectSocket() = socket.connect()
+    fun connectSocket() = socket.ensureConnected()
+
+    fun isSocketConnected(): Boolean = socket.isConnected()
 
     fun disconnectSocket() = socket.disconnect()
 
@@ -64,9 +67,32 @@ class ChatRepository(
         return callId
     }
 
-    fun acceptCall(callId: String) = socket.emitCallAccept(callId)
+    fun acceptCall(callId: String, toUserId: String? = null) = socket.emitCallAccept(callId, toUserId)
 
     fun rejectCall(callId: String) = socket.emitCallReject(callId)
+
+    suspend fun rejectCallReliable(callId: String) {
+        if (callId.isBlank()) return
+        if (!socket.isConnected()) {
+            socket.ensureConnected()
+            repeat(10) {
+                if (socket.isConnected()) return@repeat
+                delay(150)
+            }
+        }
+        socket.emitCallReject(callId)
+    }
+
+    suspend fun awaitSocketConnected(timeoutMs: Long = 15000): Boolean {
+        if (isSocketConnected()) return true
+        connectSocket()
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (isSocketConnected()) return true
+            delay(50)
+        }
+        return isSocketConnected()
+    }
 
     fun endCall(callId: String) = socket.emitCallEnd(callId)
 
