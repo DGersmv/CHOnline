@@ -8,7 +8,7 @@ import org.webrtc.PeerConnection
 
 
 
-/** ICE: STUN + TURN. Свой coturn — ключи ice.turn.* в local.properties (см. app/build.gradle.kts). Иначе Metered. */
+/** ICE: STUN + TURN. URL/логин coturn по умолчанию в app/build.gradle.kts; пароль — ice.turn.password или ICE_TURN_PASSWORD. Иначе Metered. */
 
 object WebRtcIceServers {
 

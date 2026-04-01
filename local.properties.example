@@ -1,0 +1,25 @@
+# Скопируйте в local.properties и при необходимости поправьте.
+# local.properties в Git не коммитится.
+#
+# Обязательно на этом ПК:
+sdk.dir=C\:\\Users\\YOU\\AppData\\Local\\Android\\Sdk
+
+# --- API (необязательно; иначе см. default в app/build.gradle.kts)
+# api.base.url=https://messenger.227.info
+# admin.email=admin@227.info
+
+# --- TURN (coturn): URL и логин по умолчанию уже заданы в app/build.gradle.kts.
+# Достаточно указать пароль — тот же, что в turnserver.conf (user=webrtc:...):
+ice.turn.password=ВАШ_ПАРОЛЬ_ОТ_COTURN
+
+# Либо полностью переопределить:
+# ice.turn.urls=turn:83.166.246.116:3478?transport=udp,turn:83.166.246.116:3478?transport=tcp
+# ice.turn.username=webrtc
+# ice.turn.password=...
+
+# Альтернатива без строки в файле: перед сборкой в терминале
+#   set ICE_TURN_PASSWORD=...   (Windows)
+#   export ICE_TURN_PASSWORD=... (Linux/macOS)
+
+# --- RuStore (необязательно)
+# rustore.push.project.id=

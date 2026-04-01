@@ -19,13 +19,20 @@ val adminEmail: String =
 val rustorePushProjectId: String =
     (localProperties.getProperty("rustore.push.project.id") ?: "").trim()
 
-// coturn: ice.turn.urls=turn:IP:3478?transport=udp,turn:IP:3478?transport=tcp — ice.turn.username / ice.turn.password
+// coturn: переопределение в local.properties; пароль не храним в репозитории — только в local.properties или ICE_TURN_PASSWORD.
+val defaultIceTurnUrls =
+    "turn:83.166.246.116:3478?transport=udp,turn:83.166.246.116:3478?transport=tcp"
+val defaultIceTurnUsername = "webrtc"
 val iceTurnUrls: String =
-    (localProperties.getProperty("ice.turn.urls") ?: "").trim()
+    (localProperties.getProperty("ice.turn.urls") ?: defaultIceTurnUrls).trim()
 val iceTurnUsername: String =
-    (localProperties.getProperty("ice.turn.username") ?: "").trim()
+    (localProperties.getProperty("ice.turn.username") ?: defaultIceTurnUsername).trim()
 val iceTurnPassword: String =
-    (localProperties.getProperty("ice.turn.password") ?: "").trim()
+    (
+        localProperties.getProperty("ice.turn.password")
+            ?: System.getenv("ICE_TURN_PASSWORD")
+            ?: ""
+    ).trim()
 
 fun escBuildConfig(s: String): String =
     s.replace("\\", "\\\\").replace("\"", "\\\"")
