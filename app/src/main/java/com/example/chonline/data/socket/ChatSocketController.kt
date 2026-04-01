@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import org.json.JSONObject
 import java.net.URI
+import java.util.concurrent.ConcurrentHashMap
 
 sealed interface SocketEvent {
     data class Message(val dto: MessageDto) : SocketEvent
@@ -56,6 +57,12 @@ sealed interface SocketEvent {
     data object Disconnected : SocketEvent
 }
 
+/** Снимок offer/ICE, пришедших до подписки CallViewModel на [ChatSocketController.events] (replay=0). */
+data class BufferedCallSignaling(
+    val offer: SocketEvent.CallOffer?,
+    val iceCandidates: List<String>,
+)
+
 class ChatSocketController(
     private val baseUrl: String,
     private val tokenStore: TokenStore,
@@ -67,6 +74,33 @@ class ChatSocketController(
     val events = _events.asSharedFlow()
 
     private var socket: Socket? = null
+
+    /** call:offer / call:ice могут прийти раньше, чем CallViewModel подпишется на flow. */
+    private val bufferedOfferByCallId = ConcurrentHashMap<String, SocketEvent.CallOffer>()
+    private val bufferedIceByCallId = ConcurrentHashMap<String, MutableList<String>>()
+
+    private fun bufferCallOffer(event: SocketEvent.CallOffer) {
+        bufferedOfferByCallId[event.callId] = event
+    }
+
+    private fun bufferCallIce(callId: String, candidateJson: String) {
+        if (callId.isBlank() || candidateJson.isBlank()) return
+        bufferedIceByCallId.getOrPut(callId) { mutableListOf() }.add(candidateJson)
+    }
+
+    private fun clearCallBuffers(callId: String) {
+        if (callId.isBlank()) return
+        bufferedOfferByCallId.remove(callId)
+        bufferedIceByCallId.remove(callId)
+    }
+
+    /** Вызывать из CallViewModel при входящем звонке до collect, иначе CallOffer теряется. */
+    fun consumeBufferedCallSignaling(callId: String): BufferedCallSignaling {
+        if (callId.isBlank()) return BufferedCallSignaling(null, emptyList())
+        val offer = bufferedOfferByCallId.remove(callId)
+        val ice = bufferedIceByCallId.remove(callId)?.toList().orEmpty()
+        return BufferedCallSignaling(offer, ice)
+    }
 
     fun connect() {
         disconnect()
@@ -202,6 +236,7 @@ class ChatSocketController(
         }
         s.on("call:end") { args ->
             val p = args.firstOrNull() as? JSONObject ?: return@on
+            clearCallBuffers(p.optString("callId"))
             scope.launch {
                 _events.emit(
                     SocketEvent.CallEnd(
@@ -213,15 +248,13 @@ class ChatSocketController(
         }
         s.on("call:offer") { args ->
             val p = args.firstOrNull() as? JSONObject ?: return@on
-            scope.launch {
-                _events.emit(
-                    SocketEvent.CallOffer(
-                        callId = p.optString("callId"),
-                        fromUserId = p.optString("fromUserId"),
-                        sdp = p.optString("sdp"),
-                    ),
-                )
-            }
+            val event = SocketEvent.CallOffer(
+                callId = p.optString("callId"),
+                fromUserId = p.optString("fromUserId"),
+                sdp = p.optString("sdp"),
+            )
+            bufferCallOffer(event)
+            scope.launch { _events.emit(event) }
         }
         s.on("call:answer") { args ->
             val p = args.firstOrNull() as? JSONObject ?: return@on
@@ -237,15 +270,22 @@ class ChatSocketController(
         }
         s.on("call:ice") { args ->
             val p = args.firstOrNull() as? JSONObject ?: return@on
-            scope.launch {
-                _events.emit(
-                    SocketEvent.CallIce(
-                        callId = p.optString("callId"),
-                        fromUserId = p.optString("fromUserId"),
-                        candidate = p.opt("candidate")?.toString().orEmpty(),
-                    ),
-                )
-            }
+            val callId = p.optString("callId")
+            val candRaw = p.opt("candidate")
+            // JSON null (end-of-candidates) — на Android не передаём в PeerConnection
+            if (candRaw == null || candRaw === JSONObject.NULL) return@on
+            val candidateStr =
+                when (candRaw) {
+                    is JSONObject -> candRaw.toString()
+                    else -> candRaw?.toString().orEmpty()
+                }
+            val event = SocketEvent.CallIce(
+                callId = callId,
+                fromUserId = p.optString("fromUserId"),
+                candidate = candidateStr,
+            )
+            bufferCallIce(callId, candidateStr)
+            scope.launch { _events.emit(event) }
         }
 
         s.connect()
@@ -309,9 +349,16 @@ class ChatSocketController(
 
     fun emitCallIce(callId: String, toUserId: String, candidate: String) {
         val s = socket ?: return
-        s.emit(
-            "call:ice",
-            JSONObject().put("callId", callId).put("toUserId", toUserId).put("candidate", candidate),
-        )
+        val parsed = runCatching { JSONObject(candidate) }.getOrNull()
+        val body =
+            JSONObject()
+                .put("callId", callId)
+                .put("toUserId", toUserId)
+        if (parsed != null) {
+            body.put("candidate", parsed)
+        } else {
+            body.put("candidate", candidate)
+        }
+        s.emit("call:ice", body)
     }
 }

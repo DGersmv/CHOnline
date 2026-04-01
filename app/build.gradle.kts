@@ -2,7 +2,6 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
@@ -20,6 +19,17 @@ val adminEmail: String =
 val rustorePushProjectId: String =
     (localProperties.getProperty("rustore.push.project.id") ?: "").trim()
 
+// coturn: ice.turn.urls=turn:IP:3478?transport=udp,turn:IP:3478?transport=tcp — ice.turn.username / ice.turn.password
+val iceTurnUrls: String =
+    (localProperties.getProperty("ice.turn.urls") ?: "").trim()
+val iceTurnUsername: String =
+    (localProperties.getProperty("ice.turn.username") ?: "").trim()
+val iceTurnPassword: String =
+    (localProperties.getProperty("ice.turn.password") ?: "").trim()
+
+fun escBuildConfig(s: String): String =
+    s.replace("\\", "\\\\").replace("\"", "\\\"")
+
 android {
     namespace = "com.example.chonline"
     compileSdk = 34
@@ -35,6 +45,9 @@ android {
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
         buildConfigField("String", "ADMIN_EMAIL", "\"${adminEmail.replace("\"", "\\\"")}\"")
         buildConfigField("String", "RUSTORE_PUSH_PROJECT_ID", "\"${rustorePushProjectId.replace("\"", "\\\"")}\"")
+        buildConfigField("String", "ICE_TURN_URLS", "\"${escBuildConfig(iceTurnUrls)}\"")
+        buildConfigField("String", "ICE_TURN_USERNAME", "\"${escBuildConfig(iceTurnUsername)}\"")
+        buildConfigField("String", "ICE_TURN_PASSWORD", "\"${escBuildConfig(iceTurnPassword)}\"")
     }
 
     buildTypes {
@@ -49,9 +62,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions {
-        jvmTarget = "17"
     }
     buildFeatures {
         compose = true

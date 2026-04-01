@@ -19,6 +19,7 @@ import com.example.chonline.data.remote.RoomDto
 import com.example.chonline.data.remote.SendMessageResponse
 import com.example.chonline.data.remote.SendTextRequest
 import com.example.chonline.data.remote.VoiceCallEntryDto
+import com.example.chonline.data.socket.BufferedCallSignaling
 import com.example.chonline.data.socket.ChatSocketController
 import com.example.chonline.data.socket.SocketEvent
 import kotlinx.coroutines.Dispatchers
@@ -77,6 +78,10 @@ class ChatRepository(
 
     fun sendCallIce(callId: String, toUserId: String, candidate: String) =
         socket.emitCallIce(callId, toUserId, candidate)
+
+    /** Call:offer / ICE могут прийти до подписки CallViewModel — снимок из сокета. */
+    fun consumeBufferedCallSignaling(callId: String): BufferedCallSignaling =
+        socket.consumeBufferedCallSignaling(callId)
 
     suspend fun loadRooms(): Result<List<RoomDto>> = runCatching {
         if (isClient()) api.clientRooms().rooms else api.rooms().rooms

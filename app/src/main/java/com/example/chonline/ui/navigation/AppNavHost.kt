@@ -258,7 +258,7 @@ fun AppNavHost(container: AppContainer) {
             val incoming = (entry.arguments?.getInt("incoming") ?: 0) == 1
             val autoAccept = (entry.arguments?.getInt("autoAccept") ?: 0) == 1
             val vm: CallViewModel = viewModel(
-                key = "call-${callId}-${peerId}-${incoming}",
+                key = "call-${callId}-${peerId}-${incoming}-${autoAccept}",
                 factory = CallViewModelFactory(
                     appContext = nav.context.applicationContext,
                     repo = container.chatRepository,

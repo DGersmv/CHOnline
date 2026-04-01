@@ -15,10 +15,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
+import java.util.Locale
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
@@ -29,6 +35,15 @@ fun CallScreen(
 ) {
     val context = LocalContext.current
     val ui = viewModel.ui.collectAsStateWithLifecycle().value
+    var elapsedSec by remember { mutableIntStateOf(0) }
+    LaunchedEffect(ui.status, ui.callId) {
+        elapsedSec = 0
+        if (ui.status != "connected") return@LaunchedEffect
+        while (true) {
+            delay(1_000)
+            elapsedSec++
+        }
+    }
     val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -47,8 +62,13 @@ fun CallScreen(
     }
 
     LaunchedEffect(ui.status) {
-        if (ui.status in setOf("ended", "declined", "rejected", "missed")) {
-            onClose()
+        when (ui.status) {
+            "failed" -> {
+                delay(4_000)
+                onClose()
+            }
+            in setOf("ended", "declined", "rejected", "missed") -> onClose()
+            else -> Unit
         }
     }
 
@@ -63,11 +83,19 @@ fun CallScreen(
             text = ui.peerName.ifBlank { "Звонок" },
             style = MaterialTheme.typography.headlineSmall,
         )
-        Text(
-            text = statusRu(ui.status),
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
-        )
+        if (ui.status == "connected") {
+            Text(
+                text = formatCallDuration(elapsedSec),
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.padding(top = 12.dp, bottom = 24.dp),
+            )
+        } else {
+            Text(
+                text = statusRu(ui.status),
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
+            )
+        }
         ui.error?.let {
             Text(
                 text = it,
@@ -85,11 +113,26 @@ fun CallScreen(
                     Text("Ответить")
                 }
             }
-        } else {
+        } else if (ui.status != "failed") {
             Button(onClick = { viewModel.end() }) {
                 Text("Завершить")
             }
+        } else {
+            Button(onClick = onClose) {
+                Text("Закрыть")
+            }
         }
+    }
+}
+
+private fun formatCallDuration(totalSec: Int): String {
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) {
+        String.format(Locale.US, "%d:%02d:%02d", h, m, s)
+    } else {
+        String.format(Locale.US, "%02d:%02d", m, s)
     }
 }
 
@@ -98,6 +141,7 @@ private fun statusRu(s: String): String = when (s) {
     "dialing" -> "Вызов"
     "ringing" -> "Ожидание ответа"
     "connecting" -> "Подключение"
+    "failed" -> "Не удалось соединить"
     "connected" -> "В разговоре"
     "declined" -> "Отклонено"
     "rejected" -> "Отклонено собеседником"
