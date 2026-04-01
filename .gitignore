@@ -17,3 +17,5 @@ local.properties
 
 app/build/
 **/build/
+app/google-services.json
+gradle-*-bin.zip

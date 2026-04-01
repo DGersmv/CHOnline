@@ -99,7 +99,15 @@ class CallViewModel(
                             if (!incoming) {
                                 // Мы — caller: offer уже шлём из setMicPermissionGranted (ringing) или отсюда один раз
                                 if (!micPermissionGranted) return@withContext
-                                _ui.value = _ui.value.copy(status = "connecting")
+                                val currentStatus = _ui.value.status
+                                if (
+                                    currentStatus != "connected" &&
+                                    currentStatus != "ended" &&
+                                    currentStatus != "failed" &&
+                                    currentStatus != "declined"
+                                ) {
+                                    _ui.value = _ui.value.copy(status = "connecting")
+                                }
                                 startCallerOfferIfNeeded()
                             }
                             // Для incoming — CallAccept приходит как эхо нашего accept, игнорируем
@@ -194,6 +202,16 @@ class CallViewModel(
             pendingRemoteOfferSdp = null
             applyRemoteOffer(sdp)
         } else {
+            // Race-safe: offer/ICE могли прийти между init.consumeBufferedCallSignaling()
+            // и запуском collect(socketEvents). Проверяем буфер ещё раз перед ожиданием.
+            val buffered = repo.consumeBufferedCallSignaling(callId)
+            buffered.offer?.let { off ->
+                pendingRemoteOfferSdp = null
+                for (c in buffered.iceCandidates) pendingIceCandidates.add(c)
+                applyRemoteOffer(off.sdp)
+                return
+            }
+            for (c in buffered.iceCandidates) pendingIceCandidates.add(c)
             // SDP offer ещё не пришёл — применим когда придёт CallOffer
             acceptedButWaitingOffer = true
         }
@@ -214,6 +232,8 @@ class CallViewModel(
     fun setMicPermissionGranted(granted: Boolean) {
         micPermissionGranted = granted
         if (!granted) return
+        // Входящий звонок: не создаём answer до explicit accept().
+        // Иначе web-сторона может остаться в состоянии "подключение".
         if (!_ui.value.incoming && _ui.value.status == "ringing") {
             viewModelScope.launch(Dispatchers.Main) {
                 startCallerOfferIfNeeded()
