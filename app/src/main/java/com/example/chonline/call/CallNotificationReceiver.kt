@@ -3,7 +3,7 @@ package com.example.chonline.call
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import com.example.chonline.di.AppContainer
+import com.example.chonline.CHOnlineApplication
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -19,7 +19,9 @@ class CallNotificationReceiver : BroadcastReceiver() {
                 val pendingResult = goAsync()
                 CoroutineScope(Dispatchers.IO).launch {
                     runCatching {
-                        AppContainer(context.applicationContext).chatRepository.rejectCallReliable(invite.callId)
+                        (context.applicationContext as CHOnlineApplication).appContainer
+                            .chatRepository
+                            .rejectCallReliable(invite.callId)
                     }
                     pendingResult.finish()
                 }

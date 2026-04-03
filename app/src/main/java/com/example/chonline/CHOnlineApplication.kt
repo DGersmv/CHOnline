@@ -3,21 +3,26 @@ package com.example.chonline
 import android.app.Application
 import android.os.Bundle
 import com.example.chonline.call.WebRtcEnvironment
+import com.example.chonline.di.AppContainer
+import com.example.chonline.notify.AppNotificationChannels
 import com.example.chonline.ui.navigation.AppRuntimeState
-import ru.rustore.sdk.pushclient.RuStorePushClient
 
 /**
- * WebRTC: [PeerConnectionFactory.initialize] вызывается только внутри [WebRtcEnvironment.init] (один раз за процесс).
+ * WebRTC: PeerConnectionFactory инициализируется внутри WebRtcEnvironment.init (один раз за процесс).
+ *
+ * Ru Store Push: project id подставляется в манифест (meta-data ru.rustore.sdk.pushclient.project_id) из local.properties.
+ * Ручной RuStorePushClient.init в Application не дублируем — см. документацию Ru Store (авто-инициализация).
  */
 class CHOnlineApplication : Application() {
+
+    /** Один экземпляр на процесс: иначе при пересоздании MainActivity теряется буфер SDP/ICE сокета. */
+    lateinit var appContainer: AppContainer
+        private set
+
     override fun onCreate() {
         super.onCreate()
-        if (BuildConfig.RUSTORE_PUSH_PROJECT_ID.isNotBlank()) {
-            RuStorePushClient.init(
-                application = this,
-                projectId = BuildConfig.RUSTORE_PUSH_PROJECT_ID,
-            )
-        }
+        appContainer = AppContainer(this)
+        AppNotificationChannels.registerAll(this)
         WebRtcEnvironment.init(this)
         registerActivityLifecycleCallbacks(
             object : Application.ActivityLifecycleCallbacks {
@@ -41,4 +46,5 @@ class CHOnlineApplication : Application() {
             },
         )
     }
+
 }

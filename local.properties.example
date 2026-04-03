@@ -1,25 +1,37 @@
-# Скопируйте в local.properties и при необходимости поправьте.
-# local.properties в Git не коммитится.
+# Скопируйте в local.properties. Файл в Git не коммитится.
 #
 # Обязательно на этом ПК:
 sdk.dir=C\:\\Users\\YOU\\AppData\\Local\\Android\\Sdk
 
-# --- API (необязательно; иначе см. default в app/build.gradle.kts)
-# api.base.url=https://messenger.227.info
-# admin.email=admin@227.info
+# ═══════════════════════════════════════════════════════════════════════════
+# ОДИН РАЗ для всех: тот же ключ, что в Google Play / Ru Store (upload.jks).
+# Заполните — Debug и Release подписываются ИМ: один SHA-256, push на любом ПК.
+# Путь к .jks — абсолютный или от корня проекта CHOnline.
+# ═══════════════════════════════════════════════════════════════════════════
+# release.store.file=C\:\\path\\to\\upload.jks
+# release.store.password=
+# release.key.alias=upload
+# release.key.password=
 
-# --- TURN (coturn): URL и логин по умолчанию уже заданы в app/build.gradle.kts.
-# Достаточно указать пароль — тот же, что в turnserver.conf (user=webrtc:...):
+# Если upload задан, но для debug нужен только общий keystores/debug-shared.jks:
+# debug.force.shared.keystore=true
+
+# --- API (другая компания / свой сервер)
+# Корень API без /api/v1. Для release-сборки обязателен https://
+# api.base.url=https://messenger.example.com
+# admin.email=admin@example.com
+#
+# Белый лейбл: также поменяйте в app/build.gradle.kts → defaultConfig → applicationId,
+# в app/src/main/res/values/strings.xml → app_name (имя в «Загрузках» и везде в UI),
+# при необходимости package в manifest и Application.
+
+# --- TURN (coturn)
 ice.turn.password=ВАШ_ПАРОЛЬ_ОТ_COTURN
-
-# Либо полностью переопределить:
-# ice.turn.urls=turn:83.166.246.116:3478?transport=udp,turn:83.166.246.116:3478?transport=tcp
+# ice.turn.urls=...
 # ice.turn.username=webrtc
-# ice.turn.password=...
 
-# Альтернатива без строки в файле: перед сборкой в терминале
-#   set ICE_TURN_PASSWORD=...   (Windows)
-#   export ICE_TURN_PASSWORD=... (Linux/macOS)
-
-# --- RuStore (необязательно)
+# --- Ru Store Push
 # rustore.push.project.id=
+
+# Без release.store.* используется общий keystores/debug-shared.jks (см. keystores/README.txt).
+# debug.use.shared.keystore=false

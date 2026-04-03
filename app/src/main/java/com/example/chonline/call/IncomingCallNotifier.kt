@@ -1,21 +1,18 @@
 package com.example.chonline.call
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
-import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.example.chonline.MainActivity
 import com.example.chonline.R
+import com.example.chonline.notify.AppNotificationChannels
 
 object IncomingCallNotifier {
     fun show(context: Context, invite: CallInvite) {
-        ensureChannel(context)
+        AppNotificationChannels.registerAll(context)
 
         val declineIntent = Intent(context, CallNotificationReceiver::class.java).apply {
             putExtra(CallNotificationParser.EXTRA_ACTION, CallNotificationParser.ACTION_DECLINE)
@@ -65,8 +62,8 @@ object IncomingCallNotifier {
             .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
             .setFullScreenIntent(contentPending, true)
             .setContentIntent(contentPending)
-            .addAction(0, "Отклонить", declinePending)
-            .addAction(0, "Ответить", acceptPending)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Отклонить", declinePending)
+            .addAction(android.R.drawable.sym_action_call, "Ответить", acceptPending)
             .build()
 
         NotificationManagerCompat.from(context)
@@ -76,31 +73,6 @@ object IncomingCallNotifier {
     fun cancel(context: Context, callId: String) {
         if (callId.isBlank()) return
         NotificationManagerCompat.from(context).cancel(CallNotificationParser.notificationId(callId))
-    }
-
-    private fun ensureChannel(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val nm = context.getSystemService(NotificationManager::class.java)
-        if (nm.getNotificationChannel(CallNotificationParser.CHANNEL_ID) != null) return
-        val ch = NotificationChannel(
-            CallNotificationParser.CHANNEL_ID,
-            "Входящие звонки",
-            NotificationManager.IMPORTANCE_HIGH,
-        ).apply {
-            description = "Уведомления о входящих звонках"
-            lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
-            setBypassDnd(true)
-            enableVibration(true)
-            vibrationPattern = longArrayOf(0, 350, 450, 350)
-            setSound(
-                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build(),
-            )
-        }
-        nm.createNotificationChannel(ch)
     }
 }
 

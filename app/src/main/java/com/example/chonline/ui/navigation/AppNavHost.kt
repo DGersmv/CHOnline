@@ -11,8 +11,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.activity.ComponentActivity
+import android.content.Intent
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -20,6 +24,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.chonline.call.CallCommand
 import com.example.chonline.call.CallCoordinator
+import com.example.chonline.call.CallInvite
+import com.example.chonline.call.CallNotificationParser
 import com.example.chonline.call.IncomingCallNotifier
 import com.example.chonline.di.AppContainer
 import com.example.chonline.ui.AppViewModelFactory
@@ -38,17 +44,51 @@ import com.example.chonline.ui.profile.ProfileScreen
 import com.example.chonline.ui.profile.ProfileViewModel
 import com.example.chonline.ui.rooms.RoomsViewModel
 import com.example.chonline.ui.navigation.NotificationNavigationCoordinator
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.yield
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import android.util.Log
-import ru.rustore.sdk.pushclient.RuStorePushClient
+import com.example.chonline.push.PushMessageNotifier
+import com.example.chonline.push.PushTokenRegistrar
 
 @Composable
-fun AppNavHost(container: AppContainer) {
+fun AppNavHost(
+    container: AppContainer,
+    launchIntentKey: Int,
+) {
     val nav = rememberNavController()
+    val context = LocalContext.current
+    val session by container.tokenStore.session.collectAsStateWithLifecycle(initialValue = null)
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(session) {
+        if (session != null) {
+            container.chatRepository.connectSocket()
+            kotlin.runCatching {
+                PushTokenRegistrar.registerWithServer(container, scope)
+            }
+        } else {
+            container.chatRepository.disconnectSocket()
+        }
+    }
+
+    // Сокет до navigate: иначе call:accept/offer теряются, UI зависает на «Подключение».
+    LaunchedEffect(launchIntentKey, session) {
+        if (session == null) return@LaunchedEffect
+        val act = context as? ComponentActivity ?: return@LaunchedEffect
+        val intent = act.intent
+        val needsSocketFirst =
+            intent?.action == PushMessageNotifier.ACTION_OPEN_MESSAGE ||
+                intent?.hasExtra(CallNotificationParser.EXTRA_CALL_ID) == true ||
+                intent?.hasExtra(CallNotificationParser.EXTRA_INVITE_PAYLOAD) == true
+        if (needsSocketFirst) {
+            container.chatRepository.connectSocket()
+            container.chatRepository.awaitSocketConnected(25_000)
+        }
+        processMainActivityIntentForNavigationSuspend(act, nav, container)
+    }
+
     DisposableEffect(nav) {
         val listener = androidx.navigation.NavController.OnDestinationChangedListener { _, destination, arguments ->
             when (destination.route?.substringBefore("/")) {
@@ -78,25 +118,25 @@ fun AppNavHost(container: AppContainer) {
         }
     }
 
-    val scope = rememberCoroutineScope()
-    val session by container.tokenStore.session.collectAsStateWithLifecycle(initialValue = null)
-
-    LaunchedEffect(session) {
-        if (session != null) {
-            container.chatRepository.connectSocket()
-            kotlin.runCatching {
-                RuStorePushClient.getToken()
-                    .addOnSuccessListener { token ->
-                        scope.launch {
-                            container.authRepository.registerPushToken(token)
-                                .onFailure { e ->
-                                    Log.e("RuStorePush", "registerPushToken failed in AppNavHost: ${e.message}", e)
-                                }
-                        }
-                    }
+    LaunchedEffect(Unit) {
+        CallCoordinator.commands.collect { cmd ->
+            when (cmd) {
+                is CallCommand.IncomingInvite -> {
+                    val i = cmd.invite
+                    val route = "call/${url(i.callId)}/${url(i.roomId)}/${url(i.fromUserId)}/${url(i.fromName)}/1/0"
+                    nav.navigate(route) { launchSingleTop = true }
+                }
+                is CallCommand.Accept -> {
+                    val i = cmd.invite
+                    IncomingCallNotifier.cancel(nav.context.applicationContext, i.callId)
+                    val route = "call/${url(i.callId)}/${url(i.roomId)}/${url(i.fromUserId)}/${url(i.fromName)}/1/1"
+                    nav.navigate(route) { launchSingleTop = true }
+                }
+                is CallCommand.Decline -> {
+                    IncomingCallNotifier.cancel(nav.context.applicationContext, cmd.invite.callId)
+                    container.chatRepository.rejectCall(cmd.invite.callId)
+                }
             }
-        } else {
-            container.chatRepository.disconnectSocket()
         }
     }
 
@@ -114,56 +154,9 @@ fun AppNavHost(container: AppContainer) {
                 val foreground = AppRuntimeState.isForeground.value
                 val activeCall = AppRuntimeState.activeCallId.value
                 if (foreground && activeCall.isNullOrBlank()) {
-                    Log.d("CallFlow", "socket call:invite -> open call screen callId=${invite.callId}")
                     CallCoordinator.submit(CallCommand.IncomingInvite(invite))
                 } else if (!foreground && activeCall.isNullOrBlank()) {
-                    Log.d("CallFlow", "socket call:invite -> show notif callId=${invite.callId}")
                     IncomingCallNotifier.show(nav.context.applicationContext, invite)
-                }
-            }
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        CallCoordinator.consumePending()?.let { cmd ->
-            when (cmd) {
-                is CallCommand.IncomingInvite -> {
-                    val i = cmd.invite
-                    val route = "call/${url(i.callId)}/${url(i.roomId)}/${url(i.fromUserId)}/${url(i.fromName)}/1/0"
-                    Log.d("CallFlow", "consumePending IncomingInvite -> navigate $route")
-                    nav.navigate(route) { launchSingleTop = true }
-                }
-                is CallCommand.Accept -> {
-                    val i = cmd.invite
-                    IncomingCallNotifier.cancel(nav.context.applicationContext, i.callId)
-                    val route = "call/${url(i.callId)}/${url(i.roomId)}/${url(i.fromUserId)}/${url(i.fromName)}/1/1"
-                    Log.d("CallFlow", "consumePending Accept -> navigate $route")
-                    nav.navigate(route) { launchSingleTop = true }
-                }
-                is CallCommand.Decline -> {
-                    IncomingCallNotifier.cancel(nav.context.applicationContext, cmd.invite.callId)
-                    container.chatRepository.rejectCall(cmd.invite.callId)
-                }
-            }
-        }
-        CallCoordinator.commands.collect { cmd ->
-            when (cmd) {
-                is CallCommand.IncomingInvite -> {
-                    val i = cmd.invite
-                    val route = "call/${url(i.callId)}/${url(i.roomId)}/${url(i.fromUserId)}/${url(i.fromName)}/1/0"
-                    Log.d("CallFlow", "commands IncomingInvite -> navigate $route")
-                    nav.navigate(route) { launchSingleTop = true }
-                }
-                is CallCommand.Accept -> {
-                    val i = cmd.invite
-                    IncomingCallNotifier.cancel(nav.context.applicationContext, i.callId)
-                    val route = "call/${url(i.callId)}/${url(i.roomId)}/${url(i.fromUserId)}/${url(i.fromName)}/1/1"
-                    Log.d("CallFlow", "commands Accept -> navigate $route")
-                    nav.navigate(route) { launchSingleTop = true }
-                }
-                is CallCommand.Decline -> {
-                    IncomingCallNotifier.cancel(nav.context.applicationContext, cmd.invite.callId)
-                    container.chatRepository.rejectCall(cmd.invite.callId)
                 }
             }
         }
@@ -196,9 +189,11 @@ fun AppNavHost(container: AppContainer) {
                     }
                     return@LaunchedEffect
                 }
-                // Дать соседнему LaunchedEffect (CallCoordinator) применить navigate на экран звонка
-                // до стартового редиректа в profile/rooms — иначе возможен race с «Профиль».
-                yield()
+                repeat(40) {
+                    val r = nav.currentDestination?.route.orEmpty()
+                    if (r.startsWith("call/")) return@LaunchedEffect
+                    delay(16)
+                }
                 val route = nav.currentDestination?.route.orEmpty()
                 if (route.startsWith("call/")) return@LaunchedEffect
                 val snap = container.authRepository.loadProfileForStartup().getOrNull()
@@ -342,8 +337,9 @@ fun AppNavHost(container: AppContainer) {
             val peerName = URLDecoder.decode(entry.arguments?.getString("peerNameEnc")!!, StandardCharsets.UTF_8.name())
             val incoming = (entry.arguments?.getInt("incoming") ?: 0) == 1
             val autoAccept = (entry.arguments?.getInt("autoAccept") ?: 0) == 1
+            /** Один VM на callId: маршрут 1/0 и 1/1 отличается только autoAccept — второй экземпляр терял offer/ICE из буфера. */
             val vm: CallViewModel = viewModel(
-                key = "call-${callId}-${peerId}-${incoming}-${autoAccept}",
+                key = "call-$callId",
                 factory = CallViewModelFactory(
                     appContext = nav.context.applicationContext,
                     repo = container.chatRepository,
@@ -352,9 +348,13 @@ fun AppNavHost(container: AppContainer) {
                     peerId = peerId,
                     peerName = peerName,
                     incoming = incoming,
-                    autoAccept = autoAccept,
                 ),
             )
+            LaunchedEffect(incoming, autoAccept) {
+                if (incoming) {
+                    vm.syncIncomingRouteAutoAccept(autoAccept)
+                }
+            }
             CallScreen(
                 viewModel = vm,
                 onClose = { nav.popBackStack() },
@@ -390,6 +390,70 @@ fun AppNavHost(container: AppContainer) {
             )
         }
     }
+}
+
+private suspend fun enrichInviteFromSocketIfNeeded(
+    container: AppContainer,
+    base: CallInvite,
+): CallInvite {
+    if (base.fromUserId.isNotBlank() && base.roomId.isNotBlank()) return base
+    val sk = container.chatRepository.awaitCallInviteForCallId(base.callId, 1500)
+    if (sk == null) {
+        return base
+    }
+    return base.copy(
+        roomId = base.roomId.ifBlank { sk.roomId },
+        fromUserId = base.fromUserId.ifBlank { sk.fromUserId },
+        fromName = base.fromName.ifBlank { sk.fromName },
+        mode = base.mode.ifBlank { sk.mode },
+    )
+}
+
+private suspend fun processMainActivityIntentForNavigationSuspend(
+    activity: ComponentActivity,
+    nav: NavHostController,
+    container: AppContainer,
+) {
+    val intent = activity.intent ?: return
+    if (intent.action == PushMessageNotifier.ACTION_OPEN_MESSAGE) {
+        val roomId = intent.getStringExtra(PushMessageNotifier.EXTRA_ROOM_ID).orEmpty()
+        if (roomId.isNotBlank()) {
+            val e = URLEncoder.encode(roomId, StandardCharsets.UTF_8.name())
+            nav.navigate("chat/$e") { launchSingleTop = true }
+        }
+        intent.removeExtra(PushMessageNotifier.EXTRA_ROOM_ID)
+        intent.removeExtra(PushMessageNotifier.EXTRA_MESSAGE_ID)
+        if (intent.action == PushMessageNotifier.ACTION_OPEN_MESSAGE) {
+            intent.action = Intent.ACTION_MAIN
+        }
+        return
+    }
+    val invite = CallNotificationParser.readInvite(intent) ?: return
+    IncomingCallNotifier.cancel(activity.applicationContext, invite.callId)
+    when (intent.getStringExtra(CallNotificationParser.EXTRA_ACTION).orEmpty()) {
+        CallNotificationParser.ACTION_ACCEPT -> {
+            if (CallCoordinator.prepareForIntentNavigation(CallCommand.Accept(invite))) {
+                val merged = enrichInviteFromSocketIfNeeded(container, invite)
+                val route =
+                    "call/${url(merged.callId)}/${url(merged.roomId)}/${url(merged.fromUserId)}/${url(merged.fromName)}/1/1"
+                nav.navigate(route) { launchSingleTop = true }
+            }
+        }
+        CallNotificationParser.ACTION_DECLINE -> {
+            if (CallCoordinator.prepareForIntentNavigation(CallCommand.Decline(invite))) {
+                container.chatRepository.rejectCall(invite.callId)
+            }
+        }
+        else -> {
+            if (CallCoordinator.prepareForIntentNavigation(CallCommand.IncomingInvite(invite))) {
+                val merged = enrichInviteFromSocketIfNeeded(container, invite)
+                val route =
+                    "call/${url(merged.callId)}/${url(merged.roomId)}/${url(merged.fromUserId)}/${url(merged.fromName)}/1/0"
+                nav.navigate(route) { launchSingleTop = true }
+            }
+        }
+    }
+    CallNotificationParser.removeInviteExtras(intent)
 }
 
 private fun url(v: String): String = URLEncoder.encode(v, StandardCharsets.UTF_8.name())

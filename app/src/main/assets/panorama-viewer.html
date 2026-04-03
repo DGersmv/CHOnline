@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; touch-action: none; background: #000; }
+    #err { color: #fff; font-family: sans-serif; padding: 16px; display: none; }
+  </style>
+</head>
+<body>
+<div id="err"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+let renderer, scene, camera, controls, animId;
+
+function dispose() {
+  if (animId) cancelAnimationFrame(animId);
+  animId = 0;
+  if (controls) { controls.dispose(); controls = null; }
+  if (renderer) {
+    renderer.dispose();
+    const c = renderer.domElement;
+    if (c && c.parentNode) c.parentNode.removeChild(c);
+    renderer = null;
+  }
+  scene = null;
+  camera = null;
+}
+
+function loop() {
+  animId = requestAnimationFrame(loop);
+  if (controls) controls.update();
+  if (renderer && scene && camera) renderer.render(scene, camera);
+}
+
+function onResize() {
+  if (!renderer || !camera) return;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / Math.max(1, h);
+  camera.updateProjectionMatrix();
+}
+
+window.startViewer = function (imageUrl) {
+  dispose();
+  window.removeEventListener('resize', onResize);
+  const errEl = document.getElementById('err');
+  errEl.style.display = 'none';
+  if (!imageUrl) {
+    errEl.textContent = 'Нет адреса изображения';
+    errEl.style.display = 'block';
+    return;
+  }
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(w, h);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  document.body.appendChild(renderer.domElement);
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a0a0a);
+  camera = new THREE.PerspectiveCamera(70, w / Math.max(1, h), 0.1, 2000);
+  camera.position.set(0, 0, 0.1);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.rotateSpeed = -0.5;
+
+  new THREE.TextureLoader().load(
+    imageUrl,
+    (tex) => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      const geom = new THREE.SphereGeometry(500, 64, 32);
+      geom.scale(-1, 1, 1);
+      const mat = new THREE.MeshBasicMaterial({ map: tex });
+      scene.add(new THREE.Mesh(geom, mat));
+      window.addEventListener('resize', onResize);
+      loop();
+    },
+    undefined,
+    () => {
+      errEl.textContent = 'Не удалось загрузить панораму';
+      errEl.style.display = 'block';
+    },
+  );
+};
+</script>
+</body>
+</html>

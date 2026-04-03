@@ -208,7 +208,12 @@ class ChatViewModel(
     }
 
     /** Несколько файлов подряд; подпись только к первому. Общий прогресс 0…1. */
-    fun sendFilesWithProgress(context: android.content.Context, uris: List<android.net.Uri>, captionForFirst: String?) {
+    fun sendFilesWithProgress(
+        context: android.content.Context,
+        uris: List<android.net.Uri>,
+        captionForFirst: String?,
+        markImageAsPanorama: (android.net.Uri) -> Boolean = { false },
+    ) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
             _fileUploadProgress.value = 0f
@@ -216,7 +221,8 @@ class ChatViewModel(
             val n = uris.size
             for ((idx, uri) in uris.withIndex()) {
                 val cap = if (idx == 0) captionForFirst else null
-                chatRepository.sendFileWithProgress(context, roomId, uri, cap) { p ->
+                val pano = markImageAsPanorama(uri)
+                chatRepository.sendFileWithProgress(context, roomId, uri, cap, pano) { p ->
                     val base = idx.toFloat() / n
                     val part = (1f / n) * p.coerceIn(0f, 1f)
                     _fileUploadProgress.value = (base + part).coerceIn(0f, 1f)

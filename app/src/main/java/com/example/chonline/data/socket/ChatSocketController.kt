@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
-import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
@@ -71,7 +71,8 @@ class ChatSocketController(
 ) {
     private val json: Json = createJson()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val _events = MutableSharedFlow<SocketEvent>(extraBufferCapacity = 64)
+    /** Шквал call:ice при trickle — маленький буфер гонял emit в подвисание и терял кандидатов. */
+    private val _events = MutableSharedFlow<SocketEvent>(extraBufferCapacity = 512)
     val events = _events.asSharedFlow()
 
     private var socket: Socket? = null
@@ -79,6 +80,12 @@ class ChatSocketController(
     /** call:offer / call:ice могут прийти раньше, чем CallViewModel подпишется на flow. */
     private val bufferedOfferByCallId = ConcurrentHashMap<String, SocketEvent.CallOffer>()
     private val bufferedIceByCallId = ConcurrentHashMap<String, MutableList<String>>()
+
+    /** Последний call:invite по callId — Ru Store push часто без roomId/fromUserId, дополняем из сокета. */
+    private val lastCallInviteByCallId = ConcurrentHashMap<String, SocketEvent.CallInvite>()
+
+    fun peekCallInvite(callId: String): SocketEvent.CallInvite? =
+        if (callId.isBlank()) null else lastCallInviteByCallId[callId]
 
     private fun bufferCallOffer(event: SocketEvent.CallOffer) {
         bufferedOfferByCallId[event.callId] = event
@@ -93,6 +100,7 @@ class ChatSocketController(
         if (callId.isBlank()) return
         bufferedOfferByCallId.remove(callId)
         bufferedIceByCallId.remove(callId)
+        lastCallInviteByCallId.remove(callId)
     }
 
     /** Вызывать из CallViewModel при входящем звонке до collect, иначе CallOffer теряется. */
@@ -119,19 +127,17 @@ class ChatSocketController(
         socket = s
 
         s.on(Socket.EVENT_CONNECT) {
-            Log.d("CallFlow", "socket connected")
             scope.launch { _events.emit(SocketEvent.Connected) }
             emitRoomsSync()
         }
         s.on(Socket.EVENT_DISCONNECT) {
-            Log.d("CallFlow", "socket disconnected")
             scope.launch { _events.emit(SocketEvent.Disconnected) }
         }
         s.on(Socket.EVENT_CONNECT_ERROR) { }
 
         s.on("msg") { args ->
             if (args.isEmpty()) return@on
-            val raw = (args[0] as? JSONObject)?.toString() ?: return@on
+            val raw = socketFirstArgToJson(args)?.toString() ?: return@on
             val dto = runCatching { json.decodeFromString(MessageDto.serializer(), raw) }.getOrNull()
                 ?: return@on
             scope.launch { _events.emit(SocketEvent.Message(dto)) }
@@ -139,7 +145,7 @@ class ChatSocketController(
 
         s.on("msg_edit") { args ->
             if (args.isEmpty()) return@on
-            val raw = (args[0] as? JSONObject)?.toString() ?: return@on
+            val raw = socketFirstArgToJson(args)?.toString() ?: return@on
             val dto = runCatching { json.decodeFromString(MessageDto.serializer(), raw) }.getOrNull()
                 ?: return@on
             scope.launch { _events.emit(SocketEvent.MessageEdit(dto)) }
@@ -147,7 +153,7 @@ class ChatSocketController(
 
         s.on("msg_delete") { args ->
             if (args.isEmpty()) return@on
-            val raw = (args[0] as? JSONObject)?.toString() ?: return@on
+            val raw = socketFirstArgToJson(args)?.toString() ?: return@on
             val p = runCatching { json.decodeFromString(MessageDeletePayload.serializer(), raw) }.getOrNull()
                 ?: return@on
             scope.launch { _events.emit(SocketEvent.MessageDelete(p.roomId, p.id)) }
@@ -155,7 +161,7 @@ class ChatSocketController(
 
         s.on("room_patch") { args ->
             if (args.isEmpty()) return@on
-            val raw = (args[0] as? JSONObject)?.toString() ?: return@on
+            val raw = socketFirstArgToJson(args)?.toString() ?: return@on
             val p = runCatching { json.decodeFromString(RoomPatchPayload.serializer(), raw) }.getOrNull()
                 ?: return@on
             scope.launch {
@@ -172,7 +178,7 @@ class ChatSocketController(
 
         s.on("room_deleted") { args ->
             if (args.isEmpty()) return@on
-            val raw = (args[0] as? JSONObject)?.toString() ?: return@on
+            val raw = socketFirstArgToJson(args)?.toString() ?: return@on
             val p = runCatching { json.decodeFromString(RoomDeletedPayload.serializer(), raw) }.getOrNull()
                 ?: return@on
             scope.launch { _events.emit(SocketEvent.RoomDeleted(p.roomId)) }
@@ -180,7 +186,7 @@ class ChatSocketController(
 
         s.on("missed_messages") { args ->
             if (args.isEmpty()) return@on
-            val raw = (args[0] as? JSONObject)?.toString() ?: return@on
+            val raw = socketFirstArgToJson(args)?.toString() ?: return@on
             val payload = runCatching { json.decodeFromString(MissedMessagesPayload.serializer(), raw) }.getOrNull()
                 ?: return@on
             scope.launch {
@@ -190,7 +196,7 @@ class ChatSocketController(
 
         s.on("system") { args ->
             if (args.isEmpty()) return@on
-            val raw = (args[0] as? JSONObject)?.toString() ?: return@on
+            val raw = socketFirstArgToJson(args)?.toString() ?: return@on
             val payload = runCatching { json.decodeFromString(SystemPayload.serializer(), raw) }.getOrNull()
                 ?: return@on
             scope.launch {
@@ -200,47 +206,53 @@ class ChatSocketController(
 
         s.on("online") { args ->
             if (args.isEmpty()) return@on
-            val raw = (args[0] as? JSONObject)?.toString() ?: return@on
+            val raw = socketFirstArgToJson(args)?.toString() ?: return@on
             val payload = runCatching { json.decodeFromString(OnlinePayload.serializer(), raw) }.getOrNull()
                 ?: return@on
             scope.launch { _events.emit(SocketEvent.Online(payload)) }
         }
 
         s.on("call:invite") { args ->
-            val p = args.firstOrNull() as? JSONObject ?: return@on
+            val p = socketFirstArgToJson(args) ?: return@on
+            val inviteEv = SocketEvent.CallInvite(
+                callId = p.optString("callId"),
+                roomId = p.optString("roomId"),
+                fromUserId = p.optString("fromUserId"),
+                fromName = p.optString("fromName"),
+                mode = p.optString("mode", "audio"),
+                ts = p.optString("ts"),
+            )
+            if (inviteEv.callId.isNotBlank()) {
+                lastCallInviteByCallId[inviteEv.callId] = inviteEv
+                while (lastCallInviteByCallId.size > 64) {
+                    val it = lastCallInviteByCallId.keys.iterator()
+                    if (!it.hasNext()) break
+                    it.next()
+                    it.remove()
+                }
+            }
             scope.launch {
-                _events.emit(
-                    SocketEvent.CallInvite(
-                        callId = p.optString("callId"),
-                        roomId = p.optString("roomId"),
-                        fromUserId = p.optString("fromUserId"),
-                        fromName = p.optString("fromName"),
-                        mode = p.optString("mode", "audio"),
-                        ts = p.optString("ts"),
-                    ),
-                )
+                _events.emit(inviteEv)
             }
         }
         s.on("call:ringing") { args ->
-            val p = args.firstOrNull() as? JSONObject ?: return@on
+            val p = socketFirstArgToJson(args) ?: return@on
             scope.launch { _events.emit(SocketEvent.CallRinging(p.optString("callId"), p.optString("toUserId"))) }
         }
         s.on("call:accept") { args ->
-            val p = args.firstOrNull() as? JSONObject ?: return@on
-            Log.d("CallFlow", "socket call:accept callId=${p.optString("callId")}")
+            val p = socketFirstArgToJson(args) ?: return@on
             scope.launch { _events.emit(SocketEvent.CallAccept(p.optString("callId"), p.optString("fromUserId"))) }
         }
         s.on("call:reject") { args ->
-            val p = args.firstOrNull() as? JSONObject ?: return@on
+            val p = socketFirstArgToJson(args) ?: return@on
             scope.launch { _events.emit(SocketEvent.CallReject(p.optString("callId"), p.optString("fromUserId"))) }
         }
         s.on("call:missed") { args ->
-            val p = args.firstOrNull() as? JSONObject ?: return@on
+            val p = socketFirstArgToJson(args) ?: return@on
             scope.launch { _events.emit(SocketEvent.CallMissed(p.optString("callId"))) }
         }
         s.on("call:end") { args ->
-            val p = args.firstOrNull() as? JSONObject ?: return@on
-            Log.d("CallFlow", "socket call:end callId=${p.optString("callId")} status=${p.optString("status")}")
+            val p = socketFirstArgToJson(args) ?: return@on
             clearCallBuffers(p.optString("callId"))
             scope.launch {
                 _events.emit(
@@ -252,8 +264,7 @@ class ChatSocketController(
             }
         }
         s.on("call:offer") { args ->
-            val p = args.firstOrNull() as? JSONObject ?: return@on
-            Log.d("CallFlow", "socket call:offer callId=${p.optString("callId")} sdpLen=${p.optString("sdp").length}")
+            val p = socketFirstArgToJson(args) ?: return@on
             val event = SocketEvent.CallOffer(
                 callId = p.optString("callId"),
                 fromUserId = p.optString("fromUserId"),
@@ -263,7 +274,7 @@ class ChatSocketController(
             scope.launch { _events.emit(event) }
         }
         s.on("call:answer") { args ->
-            val p = args.firstOrNull() as? JSONObject ?: return@on
+            val p = socketFirstArgToJson(args) ?: return@on
             scope.launch {
                 _events.emit(
                     SocketEvent.CallAnswer(
@@ -275,16 +286,13 @@ class ChatSocketController(
             }
         }
         s.on("call:ice") { args ->
-            val p = args.firstOrNull() as? JSONObject ?: return@on
+            val p = socketFirstArgToJson(args) ?: return@on
             val callId = p.optString("callId")
             val candRaw = p.opt("candidate")
             // JSON null (end-of-candidates) — на Android не передаём в PeerConnection
             if (candRaw == null || candRaw === JSONObject.NULL) return@on
-            val candidateStr =
-                when (candRaw) {
-                    is JSONObject -> candRaw.toString()
-                    else -> candRaw?.toString().orEmpty()
-                }
+            val candidateStr = iceCandidateFieldToJsonString(candRaw)
+            if (candidateStr.isBlank()) return@on
             val event = SocketEvent.CallIce(
                 callId = callId,
                 fromUserId = p.optString("fromUserId"),
@@ -309,7 +317,6 @@ class ChatSocketController(
             s?.connected() == true -> return
             s == null -> connect()
             else -> {
-                Log.d("CallFlow", "ensureConnected: reconnect existing socket (no teardown)")
                 s.connect()
             }
         }
@@ -341,15 +348,7 @@ class ChatSocketController(
     }
 
     fun emitCallAccept(callId: String, toUserId: String? = null) {
-        val s = socket
-        if (s == null) {
-            Log.e("CallFlow", "emitCallAccept skipped: socket is null callId=$callId")
-            return
-        }
-        Log.d(
-            "CallFlow",
-            "emitCallAccept callId=$callId toUserId=${toUserId.orEmpty()} socketConnected=${s.connected()}",
-        )
+        val s = socket ?: return
         val body = JSONObject().put("callId", callId)
         if (!toUserId.isNullOrBlank()) body.put("toUserId", toUserId)
         s.emit("call:accept", body)
@@ -395,4 +394,49 @@ class ChatSocketController(
         }
         s.emit("call:ice", body)
     }
+
+    /**
+     * socket.io-java-client отдаёт объекты как [JSONObject] или как [Map] — жёсткий cast терял call:ice.
+     */
+    private fun socketFirstArgToJson(args: Array<out Any>): JSONObject? {
+        val arg = args.firstOrNull() ?: return null
+        return when (arg) {
+            is JSONObject -> arg
+            is String -> runCatching { JSONObject(arg) }.getOrNull()
+            is Map<*, *> -> mapToJsonObject(arg)
+            else -> null
+        }
+    }
+
+    private fun mapToJsonObject(map: Map<*, *>): JSONObject {
+        val o = JSONObject()
+        for ((k, v) in map) {
+            val key = k?.toString() ?: continue
+            when (v) {
+                null -> o.put(key, JSONObject.NULL)
+                is JSONObject -> o.put(key, v)
+                is JSONArray -> o.put(key, v)
+                is Map<*, *> -> o.put(key, mapToJsonObject(v))
+                is Iterable<*> -> o.put(key, JSONArray(v.toList()))
+                is Boolean -> o.put(key, v)
+                is Int -> o.put(key, v)
+                is Long -> o.put(key, v)
+                is Double -> o.put(key, v)
+                is Float -> o.put(key, v.toDouble())
+                is Number -> o.put(key, v.toDouble())
+                is String -> o.put(key, v)
+                else -> o.put(key, v.toString())
+            }
+        }
+        return o
+    }
+
+    /** Вложенный candidate от браузера часто приходит как Map; [Any.toString] даёт не-JSON и ломает WebRTC. */
+    private fun iceCandidateFieldToJsonString(candRaw: Any): String =
+        when (candRaw) {
+            is JSONObject -> candRaw.toString()
+            is String -> candRaw
+            is Map<*, *> -> mapToJsonObject(candRaw).toString()
+            else -> runCatching { JSONObject(candRaw.toString()).toString() }.getOrNull().orEmpty()
+        }
 }

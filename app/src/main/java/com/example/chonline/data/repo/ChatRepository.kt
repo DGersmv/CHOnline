@@ -254,6 +254,7 @@ class ChatRepository(
         roomId: String,
         uri: Uri,
         caption: String?,
+        markAsPanorama: Boolean = false,
         onProgress: (Float) -> Unit,
     ): Result<MessageDto> = withContext(Dispatchers.IO) {
         runCatching {
@@ -279,6 +280,7 @@ class ChatRepository(
                     .addFormDataPart("file", name, fileBody)
                     .apply {
                         caption?.takeIf { it.isNotBlank() }?.let { addFormDataPart("text", it) }
+                        if (markAsPanorama) addFormDataPart("panorama", "1")
                     }
                     .addFormDataPart("originalFilename", name)
                     .build()

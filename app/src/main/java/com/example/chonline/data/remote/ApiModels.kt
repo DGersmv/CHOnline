@@ -167,6 +167,8 @@ data class FileAttachmentDto(
     @SerialName("clientUrl") val clientUrl: String? = null,
     @SerialName("clientThumbUrl") val clientThumbUrl: String? = null,
     @SerialName("thumbUrl") val thumbUrl: String? = null,
+    /** Сферическое фото ~2:1 (сервер + ручная отметка при отправке). */
+    val panorama: Boolean = false,
 )
 
 @Serializable

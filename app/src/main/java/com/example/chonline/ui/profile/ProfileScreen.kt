@@ -136,6 +136,8 @@ fun ProfileScreen(
             ) {
                 Text("Выйти", color = MaterialTheme.colorScheme.error)
             }
+            Spacer(Modifier.height(32.dp))
+            PushDiagnosticsSection()
             Spacer(Modifier.height(24.dp))
         }
     }

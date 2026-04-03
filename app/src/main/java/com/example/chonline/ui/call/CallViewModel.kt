@@ -3,7 +3,6 @@ package com.example.chonline.ui.call
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.chonline.call.CallAudioRoute
@@ -40,7 +39,6 @@ class CallViewModel(
     private val peerId: String,
     private val peerName: String,
     private val incoming: Boolean,
-    private val autoAccept: Boolean,
 ) : ViewModel() {
     private val audioRouteManager = CallAudioRouteManager(appContext)
     private val _ui = MutableStateFlow(
@@ -61,7 +59,25 @@ class CallViewModel(
     private var callId: String = initialCallId
     private var micPermissionGranted = false
 
+    /** Маршрут .../1/1 (ответ из уведомления) — подставляется без смены ViewModel, см. [syncIncomingRouteAutoAccept]. */
+    private var pendingRouteAutoAccept = false
+
+    /**
+     * Адресат call:answer / ICE. В push иногда пустой fromUserId — тогда берём fromUserId из call:offer
+     * (без toUserId сервер отбрасывает answer → вечное «Подключение»).
+     */
+    private var signalingPeerId: String = peerId
+
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    private fun signalingToUserId(): String = signalingPeerId.ifBlank { peerId }
+
+    private fun resolveSignalingPeerIfNeeded(remoteUserId: String) {
+        if (remoteUserId.isBlank()) return
+        if (signalingPeerId.isNotBlank()) return
+        signalingPeerId = remoteUserId
+        _ui.value = _ui.value.copy(peerId = signalingPeerId)
+    }
 
     /**
      * SDP offer от звонящего (Web), приходит в call:offer ещё до того как
@@ -90,24 +106,19 @@ class CallViewModel(
         if (incoming && callId.isNotBlank()) {
             val b = repo.consumeBufferedCallSignaling(callId)
             if (b.offer != null) {
+                resolveSignalingPeerIfNeeded(b.offer.fromUserId)
                 pendingRemoteOfferSdp = b.offer.sdp
-                Log.d(
-                    "CallVM",
-                    "consumeBufferedCallSignaling sdp.length=${b.offer.sdp.length} ice=${b.iceCandidates.size}",
-                )
             }
             for (c in b.iceCandidates) {
                 pendingIceCandidates.add(c)
             }
         }
         viewModelScope.launch {
-            Log.d("CallVM", "init incoming=$incoming callId=$callId autoAccept=$autoAccept")
             repo.socketEvents.collect { e ->
                 withContext(Dispatchers.Main) {
                     when (e) {
                         // ── Исходящий звонок: собеседник принял ──
                         is SocketEvent.CallAccept -> if (e.callId == callId) {
-                            Log.d("CallVM", "CallAccept incoming=$incoming mic=$micPermissionGranted")
                             if (!incoming) {
                                 // Мы — caller: offer уже шлём из setMicPermissionGranted (ringing) или отсюда один раз
                                 if (!micPermissionGranted) return@withContext
@@ -140,7 +151,6 @@ class CallViewModel(
                         }
 
                         is SocketEvent.CallEnd -> if (e.callId == callId) {
-                            Log.d("CallVM", "CallEnd status=${e.status}")
                             audioRouteManager.endSession()
                             cancelWaitingOfferTimeout()
                             cancelAcceptRetry()
@@ -157,10 +167,7 @@ class CallViewModel(
 
                         // ── Входящий SDP offer от звонящего ──
                         is SocketEvent.CallOffer -> if (e.callId == callId) {
-                            Log.d(
-                                "CallVM",
-                                "CallOffer received sdp.length=${e.sdp.length} acceptedButWaiting=$acceptedButWaitingOffer",
-                            )
+                            resolveSignalingPeerIfNeeded(e.fromUserId)
                             if (acceptedButWaitingOffer) {
                                 // Пользователь уже нажал «Ответить», offer пришёл — применяем
                                 acceptedButWaitingOffer = false
@@ -175,11 +182,6 @@ class CallViewModel(
 
                         // ── Ответ на наш offer (исходящий звонок) ──
                         is SocketEvent.CallAnswer -> if (e.callId == callId) {
-                            Log.d(
-                                "CallVM",
-                                "CallAnswer sdp.length=${e.sdp.length} incoming=$incoming " +
-                                    "(если раньше CallAccept — answer буферизуется в AudioCallEngine)",
-                            )
                             val eng = ensureEngine()
                             eng?.onRemoteAnswer(e.sdp)
                             if (eng != null) drainPendingIce(eng)
@@ -187,7 +189,7 @@ class CallViewModel(
 
                         // ── ICE-кандидаты ──
                         is SocketEvent.CallIce -> if (e.callId == callId) {
-                            Log.d("CallVM", "CallIce received engine=${engine != null}")
+                            resolveSignalingPeerIfNeeded(e.fromUserId)
                             val eng = engine
                             if (eng != null) {
                                 eng.onRemoteIce(e.candidate)
@@ -204,10 +206,19 @@ class CallViewModel(
         }
         if (!incoming) {
             callId = repo.startCall(toUserId = peerId, roomId = roomId, mode = "audio")
-            Log.d("CallVM", "outgoing startCall callId=$callId peerId=$peerId")
             _ui.value = _ui.value.copy(callId = callId, status = "ringing")
-        } else if (autoAccept) {
-            if (micPermissionGranted) accept()
+        }
+    }
+
+    /**
+     * Один [CallViewModel] на [callId]: при смене маршрута 1/0 → 1/1 без нового экземпляра
+     * (иначе второй init снова вызывает consumeBufferedCallSignaling и теряет offer/ICE).
+     */
+    fun syncIncomingRouteAutoAccept(wantAutoAccept: Boolean) {
+        if (!incoming) return
+        pendingRouteAutoAccept = wantAutoAccept
+        if (wantAutoAccept && micPermissionGranted) {
+            accept()
         }
     }
 
@@ -219,8 +230,14 @@ class CallViewModel(
      * Если SDP ещё не пришёл — ставим флаг и ждём CallOffer event.
      */
     fun accept() {
-        Log.d("CallVM", "accept() mic=$micPermissionGranted pendingSdp=${pendingRemoteOfferSdp != null}")
-        Log.d("CallFlow", "accept pressed callId=$callId incoming=$incoming")
+        if (incoming) {
+            when (_ui.value.status) {
+                "connecting", "connected" -> {
+                    return
+                }
+                else -> Unit
+            }
+        }
         if (!micPermissionGranted) {
             _ui.value = _ui.value.copy(status = "failed", error = "Нужен доступ к микрофону")
             return
@@ -229,7 +246,6 @@ class CallViewModel(
         viewModelScope.launch {
             val socketReady = repo.awaitSocketConnected(15_000)
             if (!socketReady) {
-                Log.e("CallFlow", "accept aborted: socket not connected after timeout callId=$callId")
                 _ui.value =
                     _ui.value.copy(
                         status = "failed",
@@ -237,9 +253,7 @@ class CallViewModel(
                     )
                 return@launch
             }
-            Log.d("CallFlow", "socket ready before call:accept callId=$callId")
-            repo.acceptCall(callId, peerId)
-            Log.d("CallFlow", "emit call:accept callId=$callId toUserId=$peerId")
+            repo.acceptCall(callId, signalingToUserId().takeIf { it.isNotBlank() })
             _ui.value = _ui.value.copy(status = "connecting")
 
             val sdp = pendingRemoteOfferSdp
@@ -260,7 +274,6 @@ class CallViewModel(
                 }
                 for (c in buffered.iceCandidates) pendingIceCandidates.add(c)
                 acceptedButWaitingOffer = true
-                Log.d("CallFlow", "waiting remote offer after accept callId=$callId")
                 startAcceptRetry()
                 startWaitingOfferTimeout()
             }
@@ -294,7 +307,7 @@ class CallViewModel(
             viewModelScope.launch(Dispatchers.Main) {
                 startCallerOfferIfNeeded()
             }
-        } else if (_ui.value.incoming && autoAccept && _ui.value.status == "incoming") {
+        } else if (_ui.value.incoming && pendingRouteAutoAccept && _ui.value.status == "incoming") {
             accept()
         }
     }
@@ -333,7 +346,6 @@ class CallViewModel(
      * Применить remote offer SDP: создать engine → PeerConnection → setRemoteDescription → createAnswer.
      */
     private fun applyRemoteOffer(sdp: String) {
-        Log.d("CallVM", "applyRemoteOffer sdp.length=${sdp.length}")
         cancelWaitingOfferTimeout()
         val eng = ensureEngine() ?: return
         eng.onRemoteOffer(sdp)
@@ -345,7 +357,6 @@ class CallViewModel(
         waitingOfferTimeoutJob = viewModelScope.launch(Dispatchers.Main) {
             delay(12_000)
             if (!acceptedButWaitingOffer) return@launch
-            Log.w("CallFlow", "offer timeout after accept callId=$callId")
             acceptedButWaitingOffer = false
             cancelAcceptRetry()
             audioRouteManager.endSession()
@@ -369,11 +380,9 @@ class CallViewModel(
                 delay(2_000)
                 if (!acceptedButWaitingOffer) break
                 if (!repo.isSocketConnected()) {
-                    Log.w("CallFlow", "retry: socket down → ensureConnected (без полного сброса)")
                     repo.connectSocket()
                 }
-                Log.d("CallFlow", "retry emit call:accept callId=$callId")
-                repo.acceptCall(callId, peerId)
+                repo.acceptCall(callId, signalingToUserId().takeIf { it.isNotBlank() })
             }
         }
     }
@@ -385,8 +394,6 @@ class CallViewModel(
 
     /** Применить буферизованные ICE-кандидаты. */
     private fun drainPendingIce(eng: AudioCallEngine) {
-        val n = pendingIceCandidates.size
-        if (n > 0) Log.d("CallVM", "drainPendingIce count=$n")
         for (c in pendingIceCandidates) {
             eng.onRemoteIce(c)
         }
@@ -399,12 +406,11 @@ class CallViewModel(
         val created = runCatching {
             AudioCallEngine(
                 context = appContext,
-                onLocalOffer = { sdp -> repo.sendCallOffer(callId, peerId, sdp) },
-                onLocalAnswer = { sdp -> repo.sendCallAnswer(callId, peerId, sdp) },
-                onLocalIce = { c -> repo.sendCallIce(callId, peerId, c) },
+                onLocalOffer = { sdp -> repo.sendCallOffer(callId, signalingToUserId(), sdp) },
+                onLocalAnswer = { sdp -> repo.sendCallAnswer(callId, signalingToUserId(), sdp) },
+                onLocalIce = { c -> repo.sendCallIce(callId, signalingToUserId(), c) },
                 onConnected = {
                     mainHandler.post {
-                        Log.d("CallVM", "onConnected callback callId=$callId incoming=$incoming")
                         _ui.value = _ui.value.copy(status = "connected")
                     }
                 },
@@ -412,7 +418,6 @@ class CallViewModel(
                     mainHandler.post {
                         val s = _ui.value.status
                         if (s == "connected" || s == "ended" || s == "failed" || s == "declined") return@post
-                        Log.w("CallVM", "onConnectionFailed → UI failed callId=$callId")
                         runCatching { repo.endCall(callId) }
                         _ui.value =
                             _ui.value.copy(

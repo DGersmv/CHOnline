@@ -4,8 +4,6 @@ package com.example.chonline.call
 
 import android.content.Context
 
-import android.util.Log
-
 import java.util.concurrent.atomic.AtomicBoolean
 
 import org.json.JSONObject
@@ -71,8 +69,7 @@ class AudioCallEngine(
 
     private val failureReported = AtomicBoolean(false)
 
-    private fun reportMediaFailure(reason: String) {
-        Log.w(TAG, reason)
+    private fun reportMediaFailure() {
         if (failureReported.compareAndSet(false, true)) {
             onConnectionFailed()
         }
@@ -83,8 +80,6 @@ class AudioCallEngine(
         if (mediaConnectedNotified) return
 
         mediaConnectedNotified = true
-
-        Log.d(TAG, "media up → UI connected")
 
         onConnected()
 
@@ -109,7 +104,6 @@ class AudioCallEngine(
         if (pc != null) return
 
         val iceServers = WebRtcIceServers.peerConnectionIceServers()
-        Log.d(TAG, "RTCConfiguration iceServers=${iceServers.size} (STUN+TURN)")
         val rtcConfig =
             PeerConnection.RTCConfiguration(iceServers).apply {
                 tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
@@ -131,15 +125,11 @@ class AudioCallEngine(
 
                         .put("sdpMLineIndex", candidate.sdpMLineIndex)
 
-                    Log.d(TAG, "local ICE candidate sdpMid=${candidate.sdpMid} idx=${candidate.sdpMLineIndex}")
-
                     onLocalIce(p.toString())
 
                 }
 
                 override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
-
-                    Log.d(TAG, "PeerConnectionState=$state")
 
                     if (state == PeerConnection.PeerConnectionState.CONNECTED) {
 
@@ -148,23 +138,14 @@ class AudioCallEngine(
                     }
 
                     if (state == PeerConnection.PeerConnectionState.FAILED) {
-                        reportMediaFailure("PeerConnectionState=FAILED")
-                    }
-                    if (state == PeerConnection.PeerConnectionState.DISCONNECTED) {
-                        Log.w(TAG, "PeerConnectionState=DISCONNECTED")
+                        reportMediaFailure()
                     }
 
                 }
 
-                override fun onSignalingChange(newState: PeerConnection.SignalingState) {
-
-                    Log.d(TAG, "SignalingState=$newState")
-
-                }
+                override fun onSignalingChange(newState: PeerConnection.SignalingState) = Unit
 
                 override fun onIceConnectionChange(newState: PeerConnection.IceConnectionState) {
-
-                    Log.d(TAG, "IceConnectionState=$newState")
 
                     when (newState) {
 
@@ -175,7 +156,7 @@ class AudioCallEngine(
                         -> notifyMediaConnectedOnce()
 
                         PeerConnection.IceConnectionState.FAILED ->
-                            reportMediaFailure("IceConnectionState=FAILED (NAT/TURN/блокировка сети)")
+                            reportMediaFailure()
 
                         else -> Unit
 
@@ -183,17 +164,9 @@ class AudioCallEngine(
 
                 }
 
-                override fun onIceConnectionReceivingChange(receiving: Boolean) {
+                override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
 
-                    Log.d(TAG, "IceConnectionReceivingChange receiving=$receiving")
-
-                }
-
-                override fun onIceGatheringChange(newState: PeerConnection.IceGatheringState) {
-
-                    Log.d(TAG, "IceGatheringState=$newState")
-
-                }
+                override fun onIceGatheringChange(newState: PeerConnection.IceGatheringState) = Unit
 
                 override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) = Unit
 
@@ -203,11 +176,7 @@ class AudioCallEngine(
 
                 override fun onDataChannel(dataChannel: org.webrtc.DataChannel) = Unit
 
-                override fun onRenegotiationNeeded() {
-
-                    Log.d(TAG, "onRenegotiationNeeded")
-
-                }
+                override fun onRenegotiationNeeded() = Unit
 
                 override fun onAddTrack(
 
@@ -217,11 +186,7 @@ class AudioCallEngine(
 
                 ) = Unit
 
-                override fun onTrack(transceiver: org.webrtc.RtpTransceiver) {
-
-                    Log.d(TAG, "onTrack mid=${transceiver.mid}")
-
-                }
+                override fun onTrack(transceiver: org.webrtc.RtpTransceiver) = Unit
 
             },
 
@@ -245,15 +210,11 @@ class AudioCallEngine(
 
                 override fun onCreateSuccess(desc: SessionDescription) {
 
-                    Log.d(TAG, "createOffer success type=${desc.type}")
-
                     pc?.setLocalDescription(
 
                         object : LoggingSdpObs("setLocalDescription(offer)") {
 
                             override fun onSetSuccess() {
-
-                                Log.d(TAG, "local offer set, send to peer")
 
                                 onLocalOffer(desc.description)
 
@@ -293,8 +254,6 @@ class AudioCallEngine(
 
                 override fun onSetSuccess() {
 
-                    Log.d(TAG, "remote offer applied → createAnswer")
-
                     pc?.createAnswer(
 
                         object : LoggingSdpObs("createAnswer") {
@@ -306,8 +265,6 @@ class AudioCallEngine(
                                     object : LoggingSdpObs("setLocalDescription(answer)") {
 
                                         override fun onSetSuccess() {
-
-                                            Log.d(TAG, "local answer set, send to peer")
 
                                             onLocalAnswer(desc.description)
 
@@ -345,8 +302,6 @@ class AudioCallEngine(
 
         if (connection == null) {
 
-            Log.d(TAG, "onRemoteAnswer: pc=null → buffer sdp.length=${sdp.length}")
-
             pendingRemoteAnswerSdp = sdp
 
             return
@@ -354,14 +309,6 @@ class AudioCallEngine(
         }
 
         if (connection.signalingState() != PeerConnection.SignalingState.HAVE_LOCAL_OFFER) {
-
-            Log.d(
-
-                TAG,
-
-                "onRemoteAnswer: signaling=${connection.signalingState()} → buffer sdp.length=${sdp.length}",
-
-            )
 
             pendingRemoteAnswerSdp = sdp
 
@@ -387,8 +334,6 @@ class AudioCallEngine(
 
         } else {
 
-            Log.d(TAG, "flushPendingRemoteAnswer: defer (signaling=${pc?.signalingState()})")
-
             pendingRemoteAnswerSdp = pending
 
         }
@@ -401,17 +346,11 @@ class AudioCallEngine(
 
         val answer = SessionDescription(SessionDescription.Type.ANSWER, sdp)
 
-        Log.d(TAG, "applyRemoteAnswer sdp.length=${sdp.length}")
-
         pc?.setRemoteDescription(
 
             object : LoggingSdpObs("setRemoteDescription(answer)") {
 
-                override fun onSetSuccess() {
-
-                    Log.d(TAG, "remote answer applied")
-
-                }
+                override fun onSetSuccess() = Unit
 
             },
 
@@ -428,8 +367,6 @@ class AudioCallEngine(
         val conn = pc
 
         if (conn == null) {
-
-            Log.w(TAG, "onRemoteIce: pc=null (candidate ignored until peer exists)")
 
             return
 
@@ -451,15 +388,9 @@ class AudioCallEngine(
 
             )
 
-            val ok = conn.addIceCandidate(c)
+            conn.addIceCandidate(c)
 
-            Log.d(TAG, "addIceCandidate ok=$ok sdpMid=${c.sdpMid} idx=${c.sdpMLineIndex}")
-
-        }.onFailure { e ->
-
-            Log.e(TAG, "onRemoteIce failed: ${e.message} json=${json.take(200)}")
-
-        }
+        }.onFailure { }
 
     }
 
@@ -491,28 +422,15 @@ class AudioCallEngine(
 
         override fun onSetSuccess() = Unit
 
-        override fun onCreateFailure(error: String) {
+        override fun onCreateFailure(error: String) = Unit
 
-            Log.e(TAG, "$step onCreateFailure: $error")
-
-        }
-
-        override fun onSetFailure(error: String) {
-
-            Log.e(TAG, "$step onSetFailure: $error")
-
-        }
+        override fun onSetFailure(error: String) = Unit
 
     }
 
 
-
-    companion object {
-
-        private const val TAG = "CallVM"
-
-    }
 
 }
+
 
 

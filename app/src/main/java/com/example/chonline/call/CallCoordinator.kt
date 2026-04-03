@@ -4,46 +4,43 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
 object CallCoordinator {
+    /** extraBuffer — команды от сокета до появления подписчика. */
     private val _commands = MutableSharedFlow<CallCommand>(extraBufferCapacity = 16)
     val commands = _commands.asSharedFlow()
     private val seenIncomingCallIds = LinkedHashSet<String>()
-    @Volatile
-    private var pendingCommand: CallCommand? = null
 
-    fun submit(command: CallCommand) {
+    /**
+     * Помечаем callId (дедуп с call:invite по сокету).
+     * @return false — дублирующий IncomingInvite, навигацию не делать.
+     */
+    fun prepareForIntentNavigation(command: CallCommand): Boolean {
         val callId = when (command) {
             is CallCommand.IncomingInvite -> command.invite.callId
             is CallCommand.Accept -> command.invite.callId
             is CallCommand.Decline -> command.invite.callId
         }
-        if (callId.isNotBlank()) {
-            synchronized(seenIncomingCallIds) {
-                when (command) {
-                    is CallCommand.IncomingInvite -> {
-                        // Уже обработали этот звонок (в т.ч. ответ/отклонение из уведомления) —
-                        // не перезаписывать pending и не навигировать снова на «входящий».
-                        if (seenIncomingCallIds.contains(callId)) return
-                        seenIncomingCallIds.add(callId)
-                    }
-                    is CallCommand.Accept, is CallCommand.Decline -> {
-                        // Ответ раньше socket call:invite: помечаем callId, чтобы invite не сбросил Accept.
-                        seenIncomingCallIds.add(callId)
-                    }
+        if (callId.isBlank()) return true
+        synchronized(seenIncomingCallIds) {
+            when (command) {
+                is CallCommand.IncomingInvite -> {
+                    if (seenIncomingCallIds.contains(callId)) return false
+                    seenIncomingCallIds.add(callId)
                 }
-                while (seenIncomingCallIds.size > 256) {
-                    val first = seenIncomingCallIds.firstOrNull() ?: break
-                    seenIncomingCallIds.remove(first)
+                is CallCommand.Accept, is CallCommand.Decline -> {
+                    seenIncomingCallIds.add(callId)
                 }
             }
+            while (seenIncomingCallIds.size > 256) {
+                val first = seenIncomingCallIds.firstOrNull() ?: break
+                seenIncomingCallIds.remove(first)
+            }
         }
-        pendingCommand = command
-        _commands.tryEmit(command)
+        return true
     }
 
-    fun consumePending(): CallCommand? {
-        val p = pendingCommand
-        pendingCommand = null
-        return p
+    fun submit(command: CallCommand) {
+        if (!prepareForIntentNavigation(command)) return
+        _commands.tryEmit(command)
     }
 
 }

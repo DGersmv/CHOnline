@@ -9,7 +9,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import java.util.concurrent.TimeUnit
 
@@ -97,15 +96,8 @@ fun createOkHttpClient(
         chain.proceed(retry)
     }
 
-    val logging = HttpLoggingInterceptor().apply {
-        level =
-            if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.HEADERS
-            else HttpLoggingInterceptor.Level.NONE
-    }
-
     return OkHttpClient.Builder()
         .addInterceptor(authRefreshInterceptor)
-        .addInterceptor(logging)
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)

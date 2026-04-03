@@ -13,7 +13,6 @@ class CallViewModelFactory(
     private val peerId: String,
     private val peerName: String,
     private val incoming: Boolean,
-    private val autoAccept: Boolean,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -25,7 +24,6 @@ class CallViewModelFactory(
             peerId = peerId,
             peerName = peerName,
             incoming = incoming,
-            autoAccept = autoAccept,
         ) as T
     }
 }

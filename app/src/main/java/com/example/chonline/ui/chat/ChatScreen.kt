@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -124,6 +125,7 @@ fun ChatScreen(
 
     var pendingFileUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var fileCaption by remember { mutableStateOf("") }
+    var fileSendAsPanorama by remember { mutableStateOf(false) }
     var wasFileUploading by remember { mutableStateOf(false) }
 
     val pickFiles = rememberLauncherForActivityResult(
@@ -132,6 +134,7 @@ fun ChatScreen(
         if (uris.isNotEmpty()) {
             pendingFileUris = uris
             fileCaption = ""
+            fileSendAsPanorama = false
         }
     }
 
@@ -140,6 +143,7 @@ fun ChatScreen(
         if (wasFileUploading && fileUploadProgress == null) {
             pendingFileUris = emptyList()
             fileCaption = ""
+            fileSendAsPanorama = false
             wasFileUploading = false
         }
     }
@@ -422,6 +426,30 @@ fun ChatScreen(
                             color = CorpChatColors.textMuted,
                         )
                     }
+                    val allImages = remember(pendingFileUris) {
+                        pendingFileUris.all { u ->
+                            cr.getType(u)?.startsWith("image/") == true
+                        }
+                    }
+                    if (allImages) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable(enabled = !uploading) {
+                                fileSendAsPanorama = !fileSendAsPanorama
+                            },
+                        ) {
+                            Checkbox(
+                                checked = fileSendAsPanorama,
+                                onCheckedChange = { if (!uploading) fileSendAsPanorama = it },
+                                enabled = !uploading,
+                            )
+                            Text(
+                                "Сферическая панорама (360°)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = CorpChatColors.textPrimary,
+                            )
+                        }
+                    }
                     OutlinedTextField(
                         value = fileCaption,
                         onValueChange = { fileCaption = it },
@@ -448,7 +476,10 @@ fun ChatScreen(
                             context,
                             pendingFileUris,
                             fileCaption.trim().takeIf { it.isNotEmpty() },
-                        )
+                        ) { uri ->
+                            fileSendAsPanorama &&
+                                context.contentResolver.getType(uri)?.startsWith("image/") == true
+                        }
                     },
                     enabled = !uploading,
                 ) { Text("Отправить") }
@@ -483,6 +514,9 @@ fun ChatScreen(
     imagePreview?.let { st ->
         val base = BuildConfig.API_BASE_URL.trimEnd('/')
         var savingImage by remember(st.messageId) { mutableStateOf(false) }
+        var sphereMode by remember(st.messageId, st.file.panorama) {
+            mutableStateOf(st.file.panorama)
+        }
         Dialog(
             onDismissRequest = { imagePreview = null },
             properties = DialogProperties(
@@ -496,15 +530,28 @@ fun ChatScreen(
                     .fillMaxSize()
                     .background(Color.Black),
             ) {
-                AsyncImage(
-                    model = ImageRequest.Builder(context).data(st.url).crossfade(false).build(),
-                    contentDescription = "Просмотр изображения",
-                    imageLoader = imageLoader,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 8.dp, vertical = 40.dp),
-                    contentScale = ContentScale.Fit,
-                )
+                if (sphereMode) {
+                    PanoramaSphereWebView(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = 48.dp, bottom = 96.dp),
+                        baseUrl = base,
+                        messageId = st.messageId,
+                        file = st.file,
+                        isClient = isClient,
+                        chatRepository = container.chatRepository,
+                    )
+                } else {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context).data(st.url).crossfade(false).build(),
+                        contentDescription = "Просмотр изображения",
+                        imageLoader = imageLoader,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 8.dp, vertical = 40.dp),
+                        contentScale = ContentScale.Fit,
+                    )
+                }
                 IconButton(
                     onClick = { imagePreview = null },
                     modifier = Modifier
@@ -517,57 +564,77 @@ fun ChatScreen(
                         tint = Color.White,
                     )
                 }
-                Row(
+                Column(
                     Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    if (savingImage) {
-                        CircularProgressIndicator(
-                            Modifier.size(22.dp),
-                            color = Color.White,
-                            strokeWidth = 2.dp,
-                        )
-                        Spacer(Modifier.width(12.dp))
-                    }
-                    TextButton(
-                        onClick = {
-                            savingImage = true
-                            scope.launch {
-                                container.chatRepository
-                                    .saveChatAttachmentToDownloads(
-                                        context,
-                                        base,
-                                        st.messageId,
-                                        st.file,
-                                        isClient,
-                                    )
-                                    .fold(
-                                        onSuccess = { hint ->
-                                            savingImage = false
-                                            Toast.makeText(
-                                                context,
-                                                "Сохранено: $hint",
-                                                Toast.LENGTH_LONG,
-                                            ).show()
-                                        },
-                                        onFailure = { e ->
-                                            savingImage = false
-                                            Toast.makeText(
-                                                context,
-                                                e.message ?: "Не удалось сохранить",
-                                                Toast.LENGTH_LONG,
-                                            ).show()
-                                        },
-                                    )
-                            }
-                        },
-                        enabled = !savingImage,
+                    Text(
+                        "Сохраняется полный файл, не превью.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.LightGray,
+                    )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Сохранить в «Загрузки»", color = Color.White)
+                        if (savingImage) {
+                            CircularProgressIndicator(
+                                Modifier.size(22.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp,
+                            )
+                            Spacer(Modifier.width(12.dp))
+                        }
+                        TextButton(
+                            onClick = {
+                                savingImage = true
+                                scope.launch {
+                                    container.chatRepository
+                                        .saveChatAttachmentToDownloads(
+                                            context,
+                                            base,
+                                            st.messageId,
+                                            st.file,
+                                            isClient,
+                                        )
+                                        .fold(
+                                            onSuccess = { hint ->
+                                                savingImage = false
+                                                Toast.makeText(
+                                                    context,
+                                                    "Сохранено: $hint",
+                                                    Toast.LENGTH_LONG,
+                                                ).show()
+                                            },
+                                            onFailure = { e ->
+                                                savingImage = false
+                                                Toast.makeText(
+                                                    context,
+                                                    e.message ?: "Не удалось сохранить",
+                                                    Toast.LENGTH_LONG,
+                                                ).show()
+                                            },
+                                        )
+                                }
+                            },
+                            enabled = !savingImage,
+                        ) {
+                            Text("Сохранить в «Загрузки»", color = Color.White)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(
+                            onClick = { sphereMode = !sphereMode },
+                            enabled = !savingImage,
+                        ) {
+                            Text(
+                                if (sphereMode) "Плоско" else "360°",
+                                color = Color.White,
+                            )
+                        }
                     }
                 }
             }
