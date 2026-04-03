@@ -204,17 +204,34 @@ class ChatViewModel(
     }
 
     fun sendFileWithProgress(context: android.content.Context, uri: android.net.Uri, caption: String?) {
+        sendFilesWithProgress(context, listOf(uri), caption)
+    }
+
+    /** Несколько файлов подряд; подпись только к первому. Общий прогресс 0…1. */
+    fun sendFilesWithProgress(context: android.content.Context, uris: List<android.net.Uri>, captionForFirst: String?) {
+        if (uris.isEmpty()) return
         viewModelScope.launch {
             _fileUploadProgress.value = 0f
             _error.value = null
-            chatRepository.sendFileWithProgress(context, roomId, uri, caption) { p ->
-                _fileUploadProgress.value = p
+            val n = uris.size
+            for ((idx, uri) in uris.withIndex()) {
+                val cap = if (idx == 0) captionForFirst else null
+                chatRepository.sendFileWithProgress(context, roomId, uri, cap) { p ->
+                    val base = idx.toFloat() / n
+                    val part = (1f / n) * p.coerceIn(0f, 1f)
+                    _fileUploadProgress.value = (base + part).coerceIn(0f, 1f)
+                }.fold(
+                    onSuccess = { msg ->
+                        appendMessages(listOf(msg))
+                        chatRepository.updateLastSeen(roomId, msg)
+                    },
+                    onFailure = {
+                        _error.value = it.message
+                        _fileUploadProgress.value = null
+                        return@launch
+                    },
+                )
             }
-                .onSuccess { msg ->
-                    appendMessages(listOf(msg))
-                    chatRepository.updateLastSeen(roomId, msg)
-                }
-                .onFailure { _error.value = it.message }
             _fileUploadProgress.value = null
         }
     }

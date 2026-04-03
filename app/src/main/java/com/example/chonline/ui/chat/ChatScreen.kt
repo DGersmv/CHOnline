@@ -3,6 +3,8 @@ package com.example.chonline.ui.chat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -41,6 +44,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -100,13 +104,15 @@ fun ChatScreen(
     var editText by remember { mutableStateOf("") }
     var deleteTargetId by remember { mutableStateOf<String?>(null) }
 
-    var pendingFileUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingFileUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var fileCaption by remember { mutableStateOf("") }
     var wasFileUploading by remember { mutableStateOf(false) }
 
-    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let {
-            pendingFileUri = it
+    val pickFiles = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            pendingFileUris = uris
             fileCaption = ""
         }
     }
@@ -114,7 +120,7 @@ fun ChatScreen(
     LaunchedEffect(fileUploadProgress) {
         if (fileUploadProgress != null) wasFileUploading = true
         if (wasFileUploading && fileUploadProgress == null) {
-            pendingFileUri = null
+            pendingFileUris = emptyList()
             fileCaption = ""
             wasFileUploading = false
         }
@@ -246,7 +252,7 @@ fun ChatScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 TextButton(
-                    onClick = { pickFile.launch("*/*") },
+                    onClick = { pickFiles.launch(arrayOf("*/*")) },
                     enabled = !sending && fileUploadProgress == null,
                 ) { Text("Файл") }
                 OutlinedTextField(
@@ -313,26 +319,32 @@ fun ChatScreen(
         )
     }
 
-    pendingFileUri?.let { uri ->
+    if (pendingFileUris.isNotEmpty()) {
         val cr = context.contentResolver
-        val mime = remember(uri) { cr.getType(uri) ?: "application/octet-stream" }
-        val displayName = remember(uri) {
-            cr.query(uri, null, null, null, null)?.use { c ->
+        val firstUri = pendingFileUris.first()
+        val single = pendingFileUris.size == 1
+        val mime = remember(firstUri) { cr.getType(firstUri) ?: "application/octet-stream" }
+        val displayName = remember(firstUri) {
+            cr.query(firstUri, null, null, null, null)?.use { c ->
                 if (!c.moveToFirst()) return@use "файл"
                 val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                 if (idx >= 0) c.getString(idx) else null
             } ?: "файл"
         }
-        val isImage = mime.startsWith("image/")
+        val isImage = single && mime.startsWith("image/")
         val uploading = fileUploadProgress != null
         AlertDialog(
-            onDismissRequest = { if (!uploading) pendingFileUri = null },
-            title = { Text("Отправить файл") },
+            onDismissRequest = { if (!uploading) pendingFileUris = emptyList() },
+            title = {
+                Text(
+                    if (single) "Отправить файл" else "Отправить файлов: ${pendingFileUris.size}",
+                )
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (isImage) {
                         AsyncImage(
-                            model = ImageRequest.Builder(context).data(uri).crossfade(true).build(),
+                            model = ImageRequest.Builder(context).data(firstUri).crossfade(true).build(),
                             contentDescription = null,
                             imageLoader = imageLoader,
                             modifier = Modifier
@@ -341,8 +353,39 @@ fun ChatScreen(
                                 .clip(RoundedCornerShape(8.dp)),
                             contentScale = ContentScale.Fit,
                         )
-                    } else {
+                    } else if (single) {
                         Text(displayName, style = MaterialTheme.typography.bodyMedium)
+                    } else {
+                        Column(
+                            Modifier
+                                .heightIn(max = 220.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            pendingFileUris.forEachIndexed { i, uri ->
+                                key(uri) {
+                                    val name = remember(uri) {
+                                        cr.query(uri, null, null, null, null)?.use { c ->
+                                            if (!c.moveToFirst()) return@use "файл"
+                                            val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                            if (idx >= 0) c.getString(idx) else null
+                                        } ?: "файл"
+                                    }
+                                    Text(
+                                        "${i + 1}. $name",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = CorpChatColors.textPrimary,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (!single) {
+                        Text(
+                            "Подпись будет добавлена только к первому файлу.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CorpChatColors.textMuted,
+                        )
                     }
                     OutlinedTextField(
                         value = fileCaption,
@@ -350,7 +393,9 @@ fun ChatScreen(
                         modifier = Modifier.fillMaxWidth(),
                         maxLines = 4,
                         enabled = !uploading,
-                        placeholder = { Text("Подпись (необязательно)") },
+                        placeholder = {
+                            Text(if (single) "Подпись (необязательно)" else "Подпись к первому файлу (необязательно)")
+                        },
                     )
                     if (uploading) {
                         val p = fileUploadProgress ?: 0f
@@ -364,9 +409,9 @@ fun ChatScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        vm.sendFileWithProgress(
+                        vm.sendFilesWithProgress(
                             context,
-                            uri,
+                            pendingFileUris,
                             fileCaption.trim().takeIf { it.isNotEmpty() },
                         )
                     },
@@ -375,7 +420,7 @@ fun ChatScreen(
             },
             dismissButton = {
                 TextButton(
-                    onClick = { pendingFileUri = null },
+                    onClick = { pendingFileUris = emptyList() },
                     enabled = !uploading,
                 ) { Text("Отмена") }
             },
