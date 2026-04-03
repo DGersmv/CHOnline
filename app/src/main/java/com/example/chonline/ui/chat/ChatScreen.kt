@@ -17,8 +17,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -114,7 +116,7 @@ fun ChatScreen(
     val isClient = container.tokenStore.isClient()
     val scope = rememberCoroutineScope()
     var attachmentOpen by remember { mutableStateOf<AttachmentOpenUi?>(null) }
-    var imagePreviewUrl by remember { mutableStateOf<String?>(null) }
+    var imagePreview by remember { mutableStateOf<ImagePreviewState?>(null) }
 
     var editTarget by remember { mutableStateOf<MessageDto?>(null) }
     var editText by remember { mutableStateOf("") }
@@ -239,7 +241,9 @@ fun ChatScreen(
                         isClient = isClient,
                         baseUrl = BuildConfig.API_BASE_URL.trimEnd('/'),
                         imageLoader = imageLoader,
-                        onImagePreview = { url -> imagePreviewUrl = url },
+                        onImagePreview = { url, messageId, file ->
+                            imagePreview = ImagePreviewState(url, messageId, file)
+                        },
                         onOpenFileAttachment = msg.file?.let { file ->
                             if (msg.msgType != "file" || file.mime.startsWith("image/")) {
                                 null
@@ -476,9 +480,11 @@ fun ChatScreen(
         )
     }
 
-    imagePreviewUrl?.let { url ->
+    imagePreview?.let { st ->
+        val base = BuildConfig.API_BASE_URL.trimEnd('/')
+        var savingImage by remember(st.messageId) { mutableStateOf(false) }
         Dialog(
-            onDismissRequest = { imagePreviewUrl = null },
+            onDismissRequest = { imagePreview = null },
             properties = DialogProperties(
                 usePlatformDefaultWidth = false,
                 dismissOnBackPress = true,
@@ -491,7 +497,7 @@ fun ChatScreen(
                     .background(Color.Black),
             ) {
                 AsyncImage(
-                    model = ImageRequest.Builder(context).data(url).crossfade(false).build(),
+                    model = ImageRequest.Builder(context).data(st.url).crossfade(false).build(),
                     contentDescription = "Просмотр изображения",
                     imageLoader = imageLoader,
                     modifier = Modifier
@@ -500,7 +506,7 @@ fun ChatScreen(
                     contentScale = ContentScale.Fit,
                 )
                 IconButton(
-                    onClick = { imagePreviewUrl = null },
+                    onClick = { imagePreview = null },
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(4.dp),
@@ -510,6 +516,59 @@ fun ChatScreen(
                         contentDescription = "Закрыть",
                         tint = Color.White,
                     )
+                }
+                Row(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (savingImage) {
+                        CircularProgressIndicator(
+                            Modifier.size(22.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.width(12.dp))
+                    }
+                    TextButton(
+                        onClick = {
+                            savingImage = true
+                            scope.launch {
+                                container.chatRepository
+                                    .saveChatAttachmentToDownloads(
+                                        context,
+                                        base,
+                                        st.messageId,
+                                        st.file,
+                                        isClient,
+                                    )
+                                    .fold(
+                                        onSuccess = { hint ->
+                                            savingImage = false
+                                            Toast.makeText(
+                                                context,
+                                                "Сохранено: $hint",
+                                                Toast.LENGTH_LONG,
+                                            ).show()
+                                        },
+                                        onFailure = { e ->
+                                            savingImage = false
+                                            Toast.makeText(
+                                                context,
+                                                e.message ?: "Не удалось сохранить",
+                                                Toast.LENGTH_LONG,
+                                            ).show()
+                                        },
+                                    )
+                            }
+                        },
+                        enabled = !savingImage,
+                    ) {
+                        Text("Сохранить в «Загрузки»", color = Color.White)
+                    }
                 }
             }
         }
@@ -723,6 +782,12 @@ fun ChatScreen(
     }
 }
 
+private data class ImagePreviewState(
+    val url: String,
+    val messageId: String,
+    val file: FileAttachmentDto,
+)
+
 private data class AttachmentOpenUi(
     val messageId: String,
     val fileName: String,
@@ -796,7 +861,7 @@ private fun MessageBubble(
     isClient: Boolean,
     baseUrl: String,
     imageLoader: ImageLoader,
-    onImagePreview: ((String) -> Unit)?,
+    onImagePreview: ((String, String, FileAttachmentDto) -> Unit)?,
     onOpenFileAttachment: (() -> Unit)?,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -852,7 +917,7 @@ private fun MessageBubble(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable(enabled = onImagePreview != null) {
-                                    onImagePreview?.invoke(previewUrl)
+                                    onImagePreview?.invoke(previewUrl, msg.id, file)
                                 },
                             contentScale = ContentScale.Fit,
                         )
