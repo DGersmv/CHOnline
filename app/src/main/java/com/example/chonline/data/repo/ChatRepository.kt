@@ -1,8 +1,13 @@
 package com.example.chonline.data.repo
 
+import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.OpenableColumns
+import com.example.chonline.R
 import com.example.chonline.BuildConfig
 import com.example.chonline.data.local.LastSeenStore
 import com.example.chonline.data.local.TokenStore
@@ -18,6 +23,7 @@ import com.example.chonline.data.remote.PatchRoomRequest
 import com.example.chonline.data.remote.RoomDto
 import com.example.chonline.data.remote.SendMessageResponse
 import com.example.chonline.data.remote.SendTextRequest
+import com.example.chonline.data.remote.FileAttachmentDto
 import com.example.chonline.data.remote.VoiceCallEntryDto
 import com.example.chonline.data.socket.BufferedCallSignaling
 import com.example.chonline.data.socket.ChatSocketController
@@ -25,7 +31,9 @@ import com.example.chonline.data.socket.SocketEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
@@ -35,6 +43,7 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.HttpException
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -92,6 +101,20 @@ class ChatRepository(
             delay(50)
         }
         return isSocketConnected()
+    }
+
+    /**
+     * Полный payload call:invite с сервера (push из Ru Store часто без roomId / fromUserId).
+     * [peekCallInvite] ловит invite, пришедший до suspend-ожидания.
+     */
+    suspend fun awaitCallInviteForCallId(callId: String, timeoutMs: Long = 1500): SocketEvent.CallInvite? {
+        if (callId.isBlank()) return null
+        socket.peekCallInvite(callId)?.let { return it }
+        return withTimeoutOrNull(timeoutMs) {
+            socketEvents.first { ev ->
+                ev is SocketEvent.CallInvite && (ev as SocketEvent.CallInvite).callId == callId
+            } as SocketEvent.CallInvite
+        }
     }
 
     fun endCall(callId: String) = socket.emitCallEnd(callId)
@@ -367,6 +390,136 @@ class ChatRepository(
 
     fun updateLastSeen(roomId: String, message: MessageDto) {
         lastSeenStore.set(roomId, message.time)
+    }
+
+    /**
+     * Кэш по [messageId]: один файл на сообщение. Повторный вызов не тянет сеть,
+     * если локальный файл есть и размер совпадает с [FileAttachmentDto.size] (если сервер прислал size > 0).
+     */
+    suspend fun ensureChatAttachmentInCache(
+        context: Context,
+        baseUrl: String,
+        messageId: String,
+        file: FileAttachmentDto,
+        isClient: Boolean,
+    ): Result<File> = withContext(Dispatchers.IO) {
+        runCatching {
+            val dest = attachmentCacheFile(context, messageId, file)
+            if (isAttachmentCacheValid(dest, file)) {
+                return@runCatching dest
+            }
+            if (dest.exists()) dest.delete()
+            val url = buildAttachmentUrl(baseUrl, file, isClient)
+            val req = Request.Builder().url(url).build()
+            val resp = okHttp.newCall(req).execute()
+            if (!resp.isSuccessful) error("Не удалось скачать файл (${resp.code})")
+            val body = resp.body ?: error("Пустой ответ")
+            dest.parentFile?.mkdirs()
+            body.byteStream().use { input ->
+                FileOutputStream(dest).use { output -> input.copyTo(output) }
+            }
+            if (!isAttachmentCacheValid(dest, file)) {
+                dest.delete()
+                error("Файл повреждён или размер не совпадает с сервером")
+            }
+            dest
+        }
+    }
+
+    /**
+     * Копирует уже скачанный в кэш файл в общие «Загрузки» (Android 10+) или в папку загрузок приложения.
+     * @return Короткая подсказка для пользователя, куда положили файл.
+     */
+    suspend fun saveChatAttachmentToDownloads(
+        context: Context,
+        baseUrl: String,
+        messageId: String,
+        file: FileAttachmentDto,
+        isClient: Boolean,
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val local = ensureChatAttachmentInCache(
+                context,
+                baseUrl,
+                messageId,
+                file,
+                isClient,
+            ).getOrThrow()
+            val displayName = file.name.ifBlank { "file" }.replace(Regex("[\\\\/]+"), "_")
+            val mime = file.mime.ifBlank { "application/octet-stream" }
+            copyLocalFileToDownloads(context, local, displayName, mime).getOrThrow()
+        }
+    }
+
+    private fun attachmentCacheFile(context: Context, messageId: String, file: FileAttachmentDto): File {
+        val dir = File(context.cacheDir, "attachments").apply { mkdirs() }
+        val rawName = file.name.ifBlank { "file" }
+        val safe = rawName.replace("\\", "_").replace("/", "_").take(180).ifBlank { "file" }
+        val safeId = messageId.replace(Regex("[^a-zA-Z0-9._-]"), "_").take(120)
+        return File(dir, "${safeId}_$safe")
+    }
+
+    private fun isAttachmentCacheValid(cached: File, dto: FileAttachmentDto): Boolean {
+        if (!cached.isFile || !cached.exists()) return false
+        if (cached.length() == 0L) return false
+        if (dto.size > 0 && cached.length() != dto.size) return false
+        return true
+    }
+
+    private fun buildAttachmentUrl(baseUrl: String, file: FileAttachmentDto, isClient: Boolean): String {
+        val pathOrUrl = if (isClient) file.clientUrl ?: file.url else file.url
+        return if (pathOrUrl.startsWith("http://", true) || pathOrUrl.startsWith("https://", true)) {
+            pathOrUrl
+        } else {
+            baseUrl.trimEnd('/') + "/" + pathOrUrl.trimStart('/')
+        }
+    }
+
+    /** Подпапка в «Загрузках» = имя приложения ([R.string.app_name]), безопасное для пути. */
+    private fun downloadsSubfolderName(context: Context): String {
+        val raw = context.getString(R.string.app_name)
+        return raw.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifBlank { "CHOnline" }
+    }
+
+    private fun copyLocalFileToDownloads(
+        context: Context,
+        sourceFile: File,
+        displayName: String,
+        mime: String,
+    ): Result<String> = runCatching {
+        val resolver = context.contentResolver
+        val mimeType = mime.ifBlank { "application/octet-stream" }
+        val uniqueName = "${System.currentTimeMillis()}_$displayName"
+        val sub = downloadsSubfolderName(context)
+        val relative = "${Environment.DIRECTORY_DOWNLOADS}/$sub"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, uniqueName)
+                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, relative)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            val uri = resolver.insert(collection, values) ?: error("Не удалось создать запись в Загрузках")
+            try {
+                resolver.openOutputStream(uri)?.use { out ->
+                    FileInputStream(sourceFile).use { it.copyTo(out) }
+                } ?: error("Не удалось записать файл")
+                val clear = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                resolver.update(uri, clear, null, null)
+            } catch (e: Exception) {
+                resolver.delete(uri, null, null)
+                throw e
+            }
+            "Загрузки → $sub"
+        } else {
+            val base = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                ?: error("Нет доступа к памяти")
+            val dir = File(base, sub).apply { mkdirs() }
+            val dest = File(dir, uniqueName)
+            sourceFile.copyTo(dest, overwrite = true)
+            "Загрузки приложения → $sub"
+        }
     }
 
     private fun <T> Result<T>.mapError(): Result<T> = fold(
