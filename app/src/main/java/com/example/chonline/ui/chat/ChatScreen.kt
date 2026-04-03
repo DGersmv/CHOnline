@@ -2,7 +2,11 @@ package com.example.chonline.ui.chat
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.content.ClipData
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -24,9 +28,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -44,21 +51,27 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.ImageLoader
@@ -99,6 +112,9 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val imageLoader = rememberCoilWithAuth(container)
     val isClient = container.tokenStore.isClient()
+    val scope = rememberCoroutineScope()
+    var attachmentOpen by remember { mutableStateOf<AttachmentOpenUi?>(null) }
+    var imagePreviewUrl by remember { mutableStateOf<String?>(null) }
 
     var editTarget by remember { mutableStateOf<MessageDto?>(null) }
     var editText by remember { mutableStateOf("") }
@@ -223,6 +239,21 @@ fun ChatScreen(
                         isClient = isClient,
                         baseUrl = BuildConfig.API_BASE_URL.trimEnd('/'),
                         imageLoader = imageLoader,
+                        onImagePreview = { url -> imagePreviewUrl = url },
+                        onOpenFileAttachment = msg.file?.let { file ->
+                            if (msg.msgType != "file" || file.mime.startsWith("image/")) {
+                                null
+                            } else {
+                                {
+                                    attachmentOpen = AttachmentOpenUi(
+                                        messageId = msg.id,
+                                        fileName = file.name.ifBlank { "файл" },
+                                        file = file,
+                                        phase = AttachmentOpenUi.Phase.Choose,
+                                    )
+                                }
+                            }
+                        },
                         onEdit = {
                             if (msg.msgType == "text" || msg.msgType == "file") {
                                 editTarget = msg
@@ -444,6 +475,280 @@ fun ChatScreen(
             },
         )
     }
+
+    imagePreviewUrl?.let { url ->
+        Dialog(
+            onDismissRequest = { imagePreviewUrl = null },
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true,
+            ),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black),
+            ) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context).data(url).crossfade(false).build(),
+                    contentDescription = "Просмотр изображения",
+                    imageLoader = imageLoader,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 8.dp, vertical = 40.dp),
+                    contentScale = ContentScale.Fit,
+                )
+                IconButton(
+                    onClick = { imagePreviewUrl = null },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Закрыть",
+                        tint = Color.White,
+                    )
+                }
+            }
+        }
+    }
+
+    attachmentOpen?.let { st ->
+        val base = BuildConfig.API_BASE_URL.trimEnd('/')
+        when (st.phase) {
+            AttachmentOpenUi.Phase.Choose -> {
+                AlertDialog(
+                    onDismissRequest = { attachmentOpen = null },
+                    title = { Text("Файл") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(
+                                "Что сделать с «${st.fileName}»?",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                "Повторное открытие или сохранение берёт файл из кэша, " +
+                                    "если он уже скачивался и размер совпадает с сообщением — " +
+                                    "без повторной загрузки из сети.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = CorpChatColors.textMuted,
+                            )
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        attachmentOpen = st.copy(
+                                            phase = AttachmentOpenUi.Phase.Downloading,
+                                            pendingAction = AttachmentOpenUi.PendingAction.Open,
+                                        )
+                                        container.chatRepository
+                                            .ensureChatAttachmentInCache(
+                                                context,
+                                                base,
+                                                st.messageId,
+                                                st.file,
+                                                isClient,
+                                            )
+                                            .fold(
+                                                onSuccess = { javaFile ->
+                                                    val uri = FileProvider.getUriForFile(
+                                                        context,
+                                                        "${context.packageName}.fileprovider",
+                                                        javaFile,
+                                                    )
+                                                    attachmentOpen = st.copy(
+                                                        phase = AttachmentOpenUi.Phase.Ready,
+                                                        contentUri = uri,
+                                                        mime = st.file.mime.ifBlank { "application/octet-stream" },
+                                                    )
+                                                },
+                                                onFailure = { e ->
+                                                    attachmentOpen = st.copy(
+                                                        phase = AttachmentOpenUi.Phase.Error,
+                                                        error = e.message ?: "Не удалось скачать файл",
+                                                    )
+                                                },
+                                            )
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Открыть в другом приложении") }
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        attachmentOpen = st.copy(
+                                            phase = AttachmentOpenUi.Phase.Downloading,
+                                            pendingAction = AttachmentOpenUi.PendingAction.SaveToDownloads,
+                                        )
+                                        container.chatRepository
+                                            .saveChatAttachmentToDownloads(
+                                                context,
+                                                base,
+                                                st.messageId,
+                                                st.file,
+                                                isClient,
+                                            )
+                                            .fold(
+                                                onSuccess = { hint ->
+                                                    attachmentOpen = st.copy(
+                                                        phase = AttachmentOpenUi.Phase.SavedOk,
+                                                        saveHint = hint,
+                                                    )
+                                                },
+                                                onFailure = { e ->
+                                                    attachmentOpen = st.copy(
+                                                        phase = AttachmentOpenUi.Phase.Error,
+                                                        error = e.message ?: "Не удалось сохранить файл",
+                                                    )
+                                                },
+                                            )
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Сохранить в «Загрузки»") }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { attachmentOpen = null }) { Text("Отмена") }
+                    },
+                )
+            }
+
+            AttachmentOpenUi.Phase.Downloading -> {
+                val subtitle = when (st.pendingAction) {
+                    AttachmentOpenUi.PendingAction.SaveToDownloads -> "Сохранение в «Загрузки»…"
+                    AttachmentOpenUi.PendingAction.Open,
+                    null,
+                    -> "Подготовка к открытию…"
+                }
+                Dialog(
+                    onDismissRequest = { },
+                    properties = DialogProperties(
+                        dismissOnBackPress = false,
+                        dismissOnClickOutside = false,
+                        usePlatformDefaultWidth = false,
+                    ),
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = CorpChatColors.bgPanel),
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Загрузка файла", style = MaterialTheme.typography.titleMedium)
+                            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = CorpChatColors.textMuted)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp)
+                                Text(
+                                    st.fileName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = CorpChatColors.textPrimary,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            AttachmentOpenUi.Phase.Ready -> {
+                val uri = st.contentUri ?: return@let
+                val mime = st.mime ?: "application/octet-stream"
+                AlertDialog(
+                    onDismissRequest = { attachmentOpen = null },
+                    title = { Text("Файл готов") },
+                    text = {
+                        Text(
+                            "Выберите приложение, чтобы открыть «${st.fileName}».",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                try {
+                                    launchAttachmentViewIntent(context, uri, mime)
+                                } catch (_: Exception) {
+                                    Toast.makeText(
+                                        context,
+                                        "Не удалось открыть файл",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                }
+                                attachmentOpen = null
+                            },
+                        ) { Text("Открыть") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { attachmentOpen = null }) { Text("Закрыть") }
+                    },
+                )
+            }
+
+            AttachmentOpenUi.Phase.SavedOk -> {
+                AlertDialog(
+                    onDismissRequest = { attachmentOpen = null },
+                    title = { Text("Сохранено") },
+                    text = {
+                        Text(
+                            "Файл «${st.fileName}» сохранён: ${st.saveHint ?: ""}. " +
+                                "Имя в папке может начинаться с цифр (время), чтобы не перезаписать другие файлы.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { attachmentOpen = null }) { Text("ОК") }
+                    },
+                )
+            }
+
+            AttachmentOpenUi.Phase.Error -> {
+                AlertDialog(
+                    onDismissRequest = { attachmentOpen = null },
+                    title = { Text("Ошибка") },
+                    text = {
+                        Text(
+                            st.error ?: "Ошибка",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { attachmentOpen = null }) { Text("ОК") }
+                    },
+                )
+            }
+        }
+    }
+}
+
+private data class AttachmentOpenUi(
+    val messageId: String,
+    val fileName: String,
+    val file: FileAttachmentDto,
+    val phase: Phase,
+    val pendingAction: PendingAction? = null,
+    val contentUri: Uri? = null,
+    val mime: String? = null,
+    val error: String? = null,
+    val saveHint: String? = null,
+) {
+    enum class Phase { Choose, Downloading, Ready, SavedOk, Error }
+
+    enum class PendingAction { Open, SaveToDownloads }
+}
+
+private fun launchAttachmentViewIntent(context: android.content.Context, uri: Uri, mime: String) {
+    val view = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, mime)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        clipData = ClipData.newUri(context.contentResolver, "", uri)
+    }
+    val chooser = Intent.createChooser(view, "Открыть файл").apply {
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(chooser)
 }
 
 private fun formatCallLine(info: CallInfoDto?, viewerId: String?): String {
@@ -491,6 +796,8 @@ private fun MessageBubble(
     isClient: Boolean,
     baseUrl: String,
     imageLoader: ImageLoader,
+    onImagePreview: ((String) -> Unit)?,
+    onOpenFileAttachment: (() -> Unit)?,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -539,9 +846,13 @@ private fun MessageBubble(
                                 .data(full)
                                 .crossfade(true)
                                 .build(),
-                            contentDescription = null,
+                            contentDescription = "Фото в сообщении",
                             imageLoader = imageLoader,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = onImagePreview != null) {
+                                    onImagePreview?.invoke(full)
+                                },
                             contentScale = ContentScale.Fit,
                         )
                         if (msg.text.isNotBlank()) {
@@ -557,6 +868,16 @@ private fun MessageBubble(
                         )
                         if (msg.text.isNotBlank()) {
                             Text(msg.text, style = MaterialTheme.typography.bodySmall, color = CorpChatColors.textSecondary)
+                        }
+                        if (onOpenFileAttachment != null) {
+                            Text(
+                                "Сохранить или открыть",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = CorpChatColors.accent,
+                                modifier = Modifier
+                                    .padding(top = 6.dp)
+                                    .clickable(onClick = onOpenFileAttachment),
+                            )
                         }
                     }
 
