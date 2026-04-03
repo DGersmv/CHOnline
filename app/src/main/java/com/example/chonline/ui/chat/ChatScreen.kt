@@ -839,11 +839,12 @@ private fun MessageBubble(
                     }
 
                     msg.msgType == "file" && msg.file?.mime?.startsWith("image/") == true -> {
-                        val path = imagePathFor(msg.file, isClient)
-                        val full = baseUrl + path
+                        val file = msg.file!!
+                        val bubbleUrl = attachmentUrlForDisplay(baseUrl, imagePathFor(file, isClient))
+                        val previewUrl = attachmentUrlForDisplay(baseUrl, fullImagePathFor(file, isClient))
                         AsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
-                                .data(full)
+                                .data(bubbleUrl)
                                 .crossfade(true)
                                 .build(),
                             contentDescription = "Фото в сообщении",
@@ -851,7 +852,7 @@ private fun MessageBubble(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable(enabled = onImagePreview != null) {
-                                    onImagePreview?.invoke(full)
+                                    onImagePreview?.invoke(previewUrl)
                                 },
                             contentScale = ContentScale.Fit,
                         )
@@ -944,4 +945,17 @@ private fun imagePathFor(file: FileAttachmentDto, isClient: Boolean): String {
     val thumb = if (isClient) file.clientThumbUrl ?: file.thumbUrl else file.thumbUrl
     val full = if (isClient) file.clientUrl ?: file.url else file.url
     return thumb ?: full
+}
+
+/** Полноразмерное изображение для просмотра по нажатию (не превью). */
+private fun fullImagePathFor(file: FileAttachmentDto, isClient: Boolean): String {
+    val full = if (isClient) file.clientUrl ?: file.url else file.url
+    val thumb = if (isClient) file.clientThumbUrl ?: file.thumbUrl else file.thumbUrl
+    return full.ifBlank { thumb ?: "" }
+}
+
+private fun attachmentUrlForDisplay(baseUrl: String, pathOrUrl: String): String {
+    val p = pathOrUrl.trim()
+    if (p.startsWith("http://", ignoreCase = true) || p.startsWith("https://", ignoreCase = true)) return p
+    return baseUrl.trimEnd('/') + "/" + p.trimStart('/')
 }
